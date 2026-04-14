@@ -916,7 +916,7 @@ onMounted(() => {
   localRowData.value = props.rowData ?? []
   localPinned.value  = props.pinnedBottomRowData ?? []
 
-  document.addEventListener('click',     onDocClick,       true)
+  document.addEventListener('click',     onDocClick)
   document.addEventListener('mousemove', onGlobalMouseMove)
   document.addEventListener('mouseup',   onGlobalMouseUp)
 
@@ -1007,6 +1007,7 @@ const accentColor = computed(() => themeC.value.accent)
     <!-- Filter popup DOM overlay — fully theme-coloured -->
     <div
       v-if="activeFilter"
+      class="cathode-filter-popup"
       :style="filterPopupStyle"
       @click.stop
     >

@@ -606,7 +606,7 @@ const it = ["value"], ct = ["disabled"], ut = ["disabled"], st = `
     Qe(() => {
       for (const t of e.columnDefs)
         t.hide && M.add(I(t)), t.sort && !x.value && (x.value = { colId: I(t), dir: t.sort });
-      D.value = e.rowData ?? [], s.value = e.pinnedBottomRowData ?? [], document.addEventListener("click", Te, !0), document.addEventListener("mousemove", De), document.addEventListener("mouseup", Se), be(() => {
+      D.value = e.rowData ?? [], s.value = e.pinnedBottomRowData ?? [], document.addEventListener("click", Te), document.addEventListener("mousemove", De), document.addEventListener("mouseup", Se), be(() => {
         Le(), V.value && (re = new ResizeObserver(() => {
           cancelAnimationFrame(me), me = requestAnimationFrame(de);
         }), re.observe(V.value)), c("grid-ready", { api: Ge });
@@ -668,6 +668,7 @@ const it = ["value"], ct = ["disabled"], ut = ["disabled"], st = `
         }, null, 544),
         v.value ? (ce(), ue("div", {
           key: 0,
+          class: "cathode-filter-popup",
           style: Z(Ke.value),
           onClick: l[0] || (l[0] = He(() => {
           }, ["stop"]))
@@ -730,7 +731,7 @@ const it = ["value"], ct = ["disabled"], ut = ["disabled"], st = `
   for (const [c, D] of d)
     e[c] = D;
   return e;
-}, pt = /* @__PURE__ */ ht(vt, [["__scopeId", "data-v-764a2285"]]);
+}, pt = /* @__PURE__ */ ht(vt, [["__scopeId", "data-v-88687b50"]]);
 export {
   pt as CathodeGrid
 };
