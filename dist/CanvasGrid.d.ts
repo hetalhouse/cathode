@@ -23,6 +23,7 @@ export interface DrawGridOpts {
     pinnedRows: any[];
     rowHeight: number;
     scrollY: number;
+    scrollX: number;
     theme: string;
     glow: boolean;
     sortColId: string | null;
@@ -53,7 +54,7 @@ export declare function isOnFilterIcon(cx: number, colStartX: number, colWidth: 
 /** Is canvas x over the resize handle (right 6px) of a column? */
 export declare function isOnResizeHandle(cx: number, colStartX: number, colWidth: number): boolean;
 /** Hit-test a canvas-space coordinate → grid location */
-export declare function hitTest(cx: number, cy: number, cols: ResolvedCol[], rowCount: number, rowHeight: number, scrollY: number, canvasH: number, pinnedCount: number): {
+export declare function hitTest(cx: number, cy: number, cols: ResolvedCol[], rowCount: number, rowHeight: number, scrollY: number, canvasH: number, pinnedCount: number, scrollX: number): {
     area: 'header' | 'body' | 'pinned' | 'none';
     colIdx: number;
     rowIdx: number;

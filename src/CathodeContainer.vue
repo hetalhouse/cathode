@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, inject, onUnmounted, ref } from 'vue'
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Ref } from 'vue'
-import { useCathodeLayout, TITLEBAR_H } from './useCathodeLayout'
+import { useCathodeLayout, TITLEBAR_H, resetTick } from './useCathodeLayout'
 
 const props = defineProps<{
-  id:    string
-  title: string
+  id:         string
+  title:      string
+  curvature?: number   // 0–45, same scale as CathodeGrid
+  canvas?:    boolean  // true when the slot is a canvas-based component (e.g. CathodeGrid)
 }>()
 
 const { containers, bringToFront, setVisible, setMinimized, setMaximized, updatePos, updateSize } = useCathodeLayout()
@@ -19,12 +21,15 @@ const MIN_H = 80
 const KEEP  = 60
 
 const containerStyle = computed(() => {
-  const c = s.value
+  const c    = s.value
+  const curv = props.curvature ?? 0
   if (!c) return {}
+  const base = { '--curvature': curv }
   if (c.maximized) {
-    return { left: '0px', top: '0px', width: '100%', height: '100%', zIndex: c.zIndex }
+    return { ...base, left: '0px', top: '0px', width: '100%', height: '100%', zIndex: c.zIndex }
   }
   return {
+    ...base,
     left:    c.x + 'px',
     top:     c.y + 'px',
     width:   c.w + 'px',
@@ -102,18 +107,105 @@ function onResizeUp() {
   sizeBadge.value = ''
   document.removeEventListener('mousemove', onResizeMove)
   document.removeEventListener('mouseup',   onResizeUp)
+  resizeKey.value++
 }
+
+// ── Resize key — increments after drag-resize, reset, or curvature change ─────
+const resizeKey = ref(0)
+watch(resetTick, () => { resizeKey.value++ })
+watch(() => props.curvature, () => { resizeKey.value++ })
 
 onUnmounted(() => {
   document.removeEventListener('mousemove', onDragMove)
   document.removeEventListener('mouseup',   onDragUp)
   document.removeEventListener('mousemove', onResizeMove)
   document.removeEventListener('mouseup',   onResizeUp)
+  bodyEl.value?.removeEventListener('scroll', applyBarrelText)
+  resetBarrelText()
 })
 
+// ── Barrel text — font-size + line-height vary by vertical position ───────────
+const bodyEl = ref<HTMLElement | null>(null)
+
+function getRows(body: HTMLElement): HTMLElement[] {
+  if (props.canvas) return []
+  const content = body.children[0] as HTMLElement | undefined
+  if (!content) return []
+  return Array.from(content.children) as HTMLElement[]
+}
+
+function applyBarrelText() {
+  const body = bodyEl.value
+  const curv = props.curvature ?? 0
+  if (!body) return
+
+  const rows = getRows(body)
+  if (!rows.length) return
+
+  const bodyH   = body.clientHeight
+  const centerY = bodyH / 2
+  const maxExtra = curv * 0.0038  // ≈15% size swing at curvature=40
+
+  rows.forEach(row => {
+    // Store originals once so repeated calls don't compound
+    if (!row.dataset.origFs) {
+      const cs = getComputedStyle(row)
+      row.dataset.origFs = cs.fontSize
+      row.dataset.origLh = cs.lineHeight
+    }
+
+    if (curv === 0) {
+      row.style.fontSize   = ''
+      row.style.lineHeight = ''
+      return
+    }
+
+    const rect      = row.getBoundingClientRect()
+    const bodyRect  = body.getBoundingClientRect()
+    const rowCenter = rect.top - bodyRect.top + rect.height / 2
+    const t         = Math.min(1, Math.abs(rowCenter - centerY) / (bodyH / 2))
+    const scale     = 1 + maxExtra * Math.cos(t * Math.PI / 2)
+
+    const origFs = parseFloat(row.dataset.origFs!)
+    const rawLh  = row.dataset.origLh!
+    const origLh = rawLh === 'normal' ? origFs * 1.4 : parseFloat(rawLh)
+
+    if (!isNaN(origFs)) row.style.fontSize   = `${(origFs * scale).toFixed(2)}px`
+    if (!isNaN(origLh)) row.style.lineHeight = `${(origLh * scale).toFixed(2)}px`
+  })
+}
+
+function resetBarrelText() {
+  const body = bodyEl.value
+  if (!body) return
+  getRows(body).forEach(row => {
+    row.style.fontSize   = ''
+    row.style.lineHeight = ''
+    delete row.dataset.origFs
+    delete row.dataset.origLh
+  })
+}
+
+watch(() => props.curvature, (val) => {
+  if ((val ?? 0) === 0) resetBarrelText()
+  else applyBarrelText()
+})
+
+onMounted(() => {
+  bodyEl.value?.addEventListener('scroll', applyBarrelText, { passive: true })
+  nextTick(applyBarrelText)
+})
+
+
 // ── Controls ──────────────────────────────────────────────────────────────────
-function onMinimize() { setMinimized(props.id, !s.value.minimized) }
-function onMaximize() { setMaximized(props.id, !s.value.maximized) }
+function onMinimize() {
+  setMinimized(props.id, !s.value.minimized)
+  nextTick(() => { resizeKey.value++ })
+}
+function onMaximize() {
+  setMaximized(props.id, !s.value.maximized)
+  nextTick(() => { resizeKey.value++ })
+}
 function onClose()    { setVisible(props.id, false) }
 function onFocus()    { bringToFront(props.id) }
 </script>
@@ -123,7 +215,7 @@ function onFocus()    { bringToFront(props.id) }
     v-if="s && s.visible"
     :id="`cc-${id}`"
     class="cc"
-    :class="{ 'cc-minimized': s.minimized, 'cc-maximized': s.maximized }"
+    :class="{ 'cc-minimized': s.minimized, 'cc-maximized': s.maximized, 'cc-has-canvas': canvas }"
     :style="containerStyle"
     @mousedown="onFocus"
   >
@@ -143,7 +235,10 @@ function onFocus()    { bringToFront(props.id) }
 
     <!-- Content slot -->
     <div v-show="!s.minimized" class="cc-body">
-      <slot />
+      <div ref="bodyEl" class="cc-screen" @scroll="applyBarrelText">
+        <slot :resize-key="resizeKey" />
+        <div class="cc-shine" />
+      </div>
     </div>
 
     <!-- Resize handle -->
@@ -161,14 +256,14 @@ function onFocus()    { bringToFront(props.id) }
   display: flex;
   flex-direction: column;
   border: 1px solid var(--cc-border, #2a3a50);
-  border-radius: 3px;
+  border-radius: calc(3px + var(--curvature, 0) * 0.22px);
   background: var(--cc-surface, #0d1520);
   box-shadow:
     0 0 0 1px rgba(64,160,240,0.05),
     0 0 16px rgba(64,160,240,0.06),
     0 8px 32px rgba(0,0,0,0.55);
   overflow: hidden;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  transition: border-color 0.12s, box-shadow 0.12s, border-radius 0.2s;
 }
 
 .cc:focus-within,
@@ -197,11 +292,20 @@ function onFocus()    { bringToFront(props.id) }
   z-index: 40;
 }
 
-/* vignette */
+/* edge/corner darkening — four corner gradients push dark inward from outside */
 .cc::before {
   content: '';
   position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.22) 100%);
+  background:
+    radial-gradient(ellipse 60% 60% at 50% 50%, rgba(255,255,255,calc(var(--curvature,0)*0.008)) 0%, transparent 100%),
+    radial-gradient(ellipse 75% 75% at   0%   0%, rgba(0,0,0,calc(var(--curvature,0)*0.005)) 0%, transparent 100%),
+    radial-gradient(ellipse 75% 75% at 100%   0%, rgba(0,0,0,calc(var(--curvature,0)*0.005)) 0%, transparent 100%),
+    radial-gradient(ellipse 75% 75% at   0% 100%, rgba(0,0,0,calc(var(--curvature,0)*0.005)) 0%, transparent 100%),
+    radial-gradient(ellipse 75% 75% at 100% 100%, rgba(0,0,0,calc(var(--curvature,0)*0.005)) 0%, transparent 100%),
+    radial-gradient(ellipse 100% 60% at  50%   0%, rgba(0,0,0,calc(var(--curvature,0)*0.003)) 0%, transparent 100%),
+    radial-gradient(ellipse 100% 60% at  50% 100%, rgba(0,0,0,calc(var(--curvature,0)*0.003)) 0%, transparent 100%),
+    radial-gradient(ellipse 60% 100% at   0%  50%, rgba(0,0,0,calc(var(--curvature,0)*0.003)) 0%, transparent 100%),
+    radial-gradient(ellipse 60% 100% at 100%  50%, rgba(0,0,0,calc(var(--curvature,0)*0.003)) 0%, transparent 100%);
   pointer-events: none;
   z-index: 39;
 }
@@ -209,6 +313,11 @@ function onFocus()    { bringToFront(props.id) }
 /* suppress effects in light/paper theme */
 :global(:root.cathode-light) .cc::after  { display: none; }
 :global(:root.cathode-light) .cc::before { display: none; }
+
+/* canvas-based slot (e.g. CathodeGrid) renders its own WebGL effects — skip CSS overlays */
+.cc-has-canvas::after  { display: none; }
+.cc-has-canvas::before { display: none; }
+.cc-has-canvas .cc-shine { display: none; }
 
 .cc-maximized { border-radius: 0; box-shadow: none; }
 
@@ -287,6 +396,39 @@ function onFocus()    { bringToFront(props.id) }
   overflow: hidden;
   position: relative;
   z-index: 1;
+  /* negative space between frame and screen tube */
+  padding: calc(var(--curvature, 0) * 0.45px);
+  transition: padding 0.2s;
+}
+
+/* screen tube — the rounded content area inside the bezel */
+.cc-screen {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  position: relative;
+  border-radius: calc(var(--curvature, 0) * 0.55px);
+  transition: border-radius 0.2s;
+}
+
+/* canvas-based content manages its own viewport — no outer scrollbars or rounding */
+.cc-has-canvas .cc-screen {
+  overflow: hidden;
+  border-radius: 0;
+}
+
+/* glass shine — top-center highlight that appears with curvature */
+.cc-shine {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 45%;
+  background: radial-gradient(
+    ellipse at 50% 0%,
+    rgba(255,255,255,calc(var(--curvature, 0) * 0.003)) 0%,
+    transparent 65%
+  );
+  pointer-events: none;
+  z-index: 38;
 }
 
 /* ── Resize handle ──────────────────────────────────────────── */

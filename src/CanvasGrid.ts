@@ -54,7 +54,8 @@ export interface DrawGridOpts {
   rows:         any[]
   pinnedRows:   any[]
   rowHeight:    number
-  scrollY:      number        // vertical scroll offset (px) — 0 when auto-fit
+  scrollY:      number        // vertical scroll offset (px)
+  scrollX:      number        // horizontal scroll offset (px)
   theme:        string
   glow:         boolean
   sortColId:    string | null
@@ -76,11 +77,17 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
   const W = canvas.width
   const H = canvas.height
   const c = THEME_COLORS[opts.theme] ?? THEME_COLORS['none']
-  const { cols, rows, pinnedRows, rowHeight, scrollY, glow } = opts
+  const { cols, rows, pinnedRows, rowHeight, scrollY, scrollX, glow } = opts
 
   // ── Background ──────────────────────────────────────────────────────────────
   ctx.fillStyle = c.bg
   ctx.fillRect(0, 0, W, H)
+
+  // Clip to canvas so partially-visible edge columns don't overflow
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, W, H)
+  ctx.clip()
 
   const pinnedH  = pinnedRows.length * rowHeight
   const bodyH    = H - HEADER_H - pinnedH
@@ -92,9 +99,15 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
   ctx.textBaseline = 'middle'
   ctx.textAlign    = 'left'
 
-  let hx = 0
+  // hx tracks the CANVAS x position of each column (content_x - scrollX)
+  let hx = -scrollX
   for (let ci = 0; ci < cols.length; ci++) {
     const col       = cols[ci]
+
+    // Skip columns entirely off-screen
+    if (hx + col.width <= 0) { hx += col.width; continue }
+    if (hx >= W) break
+
     const hasFilter = !!opts.colFilters[col.colId]
     const isSort    = opts.sortColId === col.colId
     const label     = (col.colDef.headerName ?? col.colId).toUpperCase()
@@ -187,9 +200,13 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
     ctx.stroke()
 
     // Cells
-    let cx = 0
+    let cx = -scrollX
     for (let ci = 0; ci < cols.length; ci++) {
-      const col       = cols[ci]
+      const col = cols[ci]
+
+      if (cx + col.width <= 0) { cx += col.width; continue }
+      if (cx >= W) break
+
       const rawStyle  = opts.getCellStyle(col, row)
       const textColor = (rawStyle.color as string) ?? c.text
       const align     = (rawStyle.textAlign as string) ?? 'left'
@@ -254,9 +271,13 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
       ctx.fillStyle = 'rgba(0,0,0,0.35)'
       ctx.fillRect(0, ry, W, rowHeight)
 
-      let cx = 0
+      let cx = -scrollX
       for (let ci = 0; ci < cols.length; ci++) {
-        const col       = cols[ci]
+        const col = cols[ci]
+
+        if (cx + col.width <= 0) { cx += col.width; continue }
+        if (cx >= W) break
+
         const rawStyle  = opts.getCellStyle(col, row)
         const textColor = (rawStyle.color as string) ?? c.text
         const align     = (rawStyle.textAlign as string) ?? 'left'
@@ -299,8 +320,8 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
     }
   }
 
-  // ── Focus ring — faint border when canvas has focus ───────────────────────────
-  // (drawn last so it's always on top)
+  // Close outer canvas clip
+  ctx.restore()
 }
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
@@ -326,7 +347,9 @@ export function applyBarrel(uvX: number, uvY: number, strength: number): [number
   const ccX  = uvX - 0.5
   const ccY  = uvY - 0.5
   const dist = (ccX * ccX + ccY * ccY) * strength
-  return [uvX + ccX * (1 + dist) * dist, uvY + ccY * (1 + dist) * dist]
+  const dx   = ccX * (1 + dist) * dist
+  const dy   = ccY * (1 + dist) * dist
+  return [uvX + dx, uvY + dy * 0.15]   // Y attenuated to match shader
 }
 
 /**
@@ -379,11 +402,13 @@ export function hitTest(
   scrollY:     number,
   canvasH:     number,
   pinnedCount: number,
+  scrollX:     number,
 ): { area: 'header' | 'body' | 'pinned' | 'none', colIdx: number, rowIdx: number } {
+  const contentX = cx + scrollX   // map canvas x → content x
   let colIdx = -1
   let x = 0
   for (let ci = 0; ci < cols.length; ci++) {
-    if (cx >= x && cx < x + cols[ci].width) { colIdx = ci; break }
+    if (contentX >= x && contentX < x + cols[ci].width) { colIdx = ci; break }
     x += cols[ci].width
   }
 

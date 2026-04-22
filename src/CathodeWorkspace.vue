@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { provide, ref, onMounted, onUnmounted } from 'vue'
-import { useCathodeLayout } from './useCathodeLayout'
+import { useCathodeLayout, resetTick } from './useCathodeLayout'
 
 const props = defineProps<{
   storageKey?: string
@@ -12,6 +12,7 @@ const { containers, load, reset, setVisible } = useCathodeLayout()
 
 const workspaceEl = ref<HTMLElement | null>(null)
 provide('cathodeWorkspace', workspaceEl)
+provide('cathodeResetTick', resetTick)
 
 onMounted(() => {
   if (!workspaceEl.value) return

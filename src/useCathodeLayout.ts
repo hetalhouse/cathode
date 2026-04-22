@@ -1,5 +1,8 @@
 import { ref } from 'vue'
 
+/** Increments each time reset() is called — watchers use this to force redraws. */
+export const resetTick = ref(0)
+
 export interface ContainerState {
   x:         number
   y:         number
@@ -44,6 +47,7 @@ function reset(initial: Record<string, ContainerState>) {
   containers.value = { ...initial }
   save()
   initialized = true
+  resetTick.value++
 }
 
 function bringToFront(id: string) {

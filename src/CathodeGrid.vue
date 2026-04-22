@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import {
-  ref, reactive, computed, watch, onMounted, onUnmounted, nextTick,
+  ref, reactive, computed, watch, inject, onMounted, onUnmounted, nextTick,
 } from 'vue'
-import type { CSSProperties } from 'vue'
+import type { CSSProperties, Ref } from 'vue'
 import * as THREE from 'three'
 import type { ColDef, ColState, GridApi, ResolvedCol } from './types'
 import {
-  drawGrid, screenToCanvas, hitTest,
+  drawGrid, hitTest,
   isOnFilterIcon, isOnResizeHandle, colLeft,
-  HEADER_H, THEME_COLORS, applyBarrel,
+  HEADER_H, THEME_COLORS,
 } from './CanvasGrid'
 import './cathode.css'
 
@@ -65,7 +65,6 @@ const sortState     = ref<{ colId: string, dir: 'asc' | 'desc' } | null>(null)
 const colFilters    = reactive<Record<string, string>>({})
 const colWidths     = reactive<Record<string, number>>({})   // hint-space overrides
 const hiddenCols    = reactive(new Set<string>())
-const currentPage   = ref(0)
 const refreshKey    = ref(0)
 
 // ── Canvas dimensions (set by sizeToContainer) ────────────────────────────────
@@ -75,7 +74,8 @@ const canvasH = ref(0)
 
 // ── Interaction state ─────────────────────────────────────────────────────────
 
-const scrollY       = ref(0)   // vertical offset (px) — 0 when pagination fills exactly
+const scrollY       = ref(0)   // vertical offset (px)
+const scrollX       = ref(0)   // horizontal offset (px)
 const hoveredRow    = ref(-1)
 const selectedCell  = ref<{ row: number, col: number } | null>(null)
 const activeFilter  = ref<string | null>(null)
@@ -111,9 +111,9 @@ const resolvedCols = computed<ResolvedCol[]>(() => {
 /**
  * displayCols — columns scaled so they EXACTLY fill canvasW.
  *
- * This is the core of the "fill the space" philosophy: regardless of how many
- * columns there are, they always fill the viewport.  Curvature then compresses
- * the edge columns, effectively giving a panoramic / more-data-per-pixel view.
+ * Only scales UP when columns are narrower than the canvas.
+ * When columns exceed canvas width, natural widths are used and horizontal
+ * scroll handles navigation.
  */
 const displayCols = computed<ResolvedCol[]>(() => {
   const W = canvasW.value
@@ -122,8 +122,9 @@ const displayCols = computed<ResolvedCol[]>(() => {
   const totalHint = resolvedCols.value.reduce((s, c) => s + c.width, 0)
   if (!totalHint) return resolvedCols.value
 
+  if (totalHint >= W) return resolvedCols.value
+
   const scale = W / totalHint
-  // Distribute any rounding remainder to the last column
   let used = 0
   return resolvedCols.value.map((c, i) => {
     const isLast = i === resolvedCols.value.length - 1
@@ -133,16 +134,35 @@ const displayCols = computed<ResolvedCol[]>(() => {
   })
 })
 
-// ── autoPageSize — fills available height exactly (no vertical scroll needed) ──
-
-const autoPageSize = computed(() => {
-  const H = canvasH.value
-  if (!H) return props.paginationPageSize
-  const pinnedH = localPinned.value.length * props.rowHeight
-  const bodyH   = H - HEADER_H - pinnedH
-  const fit     = Math.max(1, Math.floor(bodyH / props.rowHeight))
-  return Math.min(fit, props.paginationPageSize)
+const maxScrollX = computed(() => {
+  const totalW = displayCols.value.reduce((s, c) => s + c.width, 0)
+  return Math.max(0, totalW - canvasW.value)
 })
+
+// ── Viewport geometry ─────────────────────────────────────────────────────────
+
+const bodyH = computed(() => {
+  const pinnedH = localPinned.value.length * props.rowHeight
+  return Math.max(0, canvasH.value - HEADER_H - pinnedH)
+})
+
+const maxScrollY = computed(() =>
+  Math.max(0, filteredRows.value.length * props.rowHeight - bodyH.value)
+)
+
+const visibleRowCount = computed(() =>
+  Math.max(1, Math.floor(bodyH.value / props.rowHeight))
+)
+
+const firstVisibleRow = computed(() =>
+  filteredRows.value.length === 0
+    ? 0
+    : Math.min(filteredRows.value.length - 1, Math.floor(scrollY.value / props.rowHeight))
+)
+
+const lastVisibleRow = computed(() =>
+  Math.min(filteredRows.value.length - 1, firstVisibleRow.value + visibleRowCount.value - 1)
+)
 
 // ── Cell value / format helpers ───────────────────────────────────────────────
 
@@ -217,21 +237,30 @@ const filteredRows = computed<any[]>(() => {
   return rows
 })
 
-const totalPages = computed(() =>
-  Math.max(1, Math.ceil(filteredRows.value.length / autoPageSize.value))
-)
+watch(filteredRows, () => { scrollY.value = 0; selectedCell.value = null })
+watch(maxScrollX,  () => { scrollX.value = Math.min(scrollX.value, maxScrollX.value) })
+watch(maxScrollY,  () => { scrollY.value = Math.min(scrollY.value, maxScrollY.value) })
 
-const pagedRows = computed<any[]>(() =>
-  props.pagination
-    ? filteredRows.value.slice(
-        currentPage.value * autoPageSize.value,
-        (currentPage.value + 1) * autoPageSize.value,
-      )
-    : filteredRows.value
-)
+// Scroll the absolute row index into the visible viewport.
+function ensureRowVisible(absRow: number) {
+  const rowTop    = absRow * props.rowHeight
+  const rowBottom = rowTop + props.rowHeight
+  if (rowTop < scrollY.value) {
+    scrollY.value = rowTop
+  } else if (rowBottom > scrollY.value + bodyH.value) {
+    scrollY.value = Math.min(maxScrollY.value, rowBottom - bodyH.value)
+  }
+}
 
-watch(filteredRows, () => { currentPage.value = 0; selectedCell.value = null })
-watch(autoPageSize, () => { currentPage.value = 0 })
+function pageUp() {
+  scrollY.value = Math.max(0, scrollY.value - bodyH.value)
+  redraw()
+}
+
+function pageDown() {
+  scrollY.value = Math.min(maxScrollY.value, scrollY.value + bodyH.value)
+  redraw()
+}
 
 // ── Column resize ─────────────────────────────────────────────────────────────
 // Resize adjusts the PROPORTIONAL width of a column while keeping all columns
@@ -244,6 +273,14 @@ let resizeStartX      = 0
 let resizeStartDispW  = 0   // display width at resize start
 let wasDragging       = false
 
+// Pan-to-scroll (click+drag in body)
+let panActive       = false
+let panStartX       = 0
+let panStartY       = 0
+let panStartScrollX = 0
+let panStartScrollY = 0
+let panMoved        = false
+
 function startColResize(colId: string, startClientX: number) {
   resizeActive     = true
   resizeColId      = colId
@@ -253,6 +290,17 @@ function startColResize(colId: string, startClientX: number) {
 }
 
 function onGlobalMouseMove(e: MouseEvent) {
+  if (panActive) {
+    const dx = panStartX - e.clientX
+    const dy = panStartY - e.clientY
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) panMoved = true
+
+    scrollX.value = Math.max(0, Math.min(maxScrollX.value, panStartScrollX + dx))
+    scrollY.value = Math.max(0, Math.min(maxScrollY.value, panStartScrollY + dy))
+    redraw()
+    return
+  }
+
   if (!resizeActive) return
 
   const W               = canvasW.value
@@ -272,6 +320,10 @@ function onGlobalMouseMove(e: MouseEvent) {
 }
 
 function onGlobalMouseUp() {
+  if (panActive) {
+    if (panMoved) wasDragging = true
+    panActive = false
+  }
   if (resizeActive) {
     resizeActive = false
     wasDragging  = true
@@ -283,6 +335,10 @@ function onGlobalMouseUp() {
 
 const wrapEl   = ref<HTMLDivElement | null>(null)
 const canvasEl = ref<HTMLCanvasElement | null>(null)
+
+// Injected by CathodeWorkspace — increments whenever reset() is called
+const resetTick = inject<Ref<number>>('cathodeResetTick', ref(0))
+watch(resetTick, () => scheduleResize())
 
 // ── Three.js ───────────────────────────────────────────────────────────────────
 
@@ -314,29 +370,24 @@ const FRAG = `
   vec2 barrel(vec2 uv) {
     vec2  cc   = uv - 0.5;
     float dist = dot(cc, cc) * uStrength;
-    return uv + cc * (1.0 + dist) * dist;
+    vec2  d    = cc * (1.0 + dist) * dist;
+    return uv + d;
   }
 
   void main() {
     vec2 uv = barrel(vUv);
 
-    // Outside the curved screen → theme-coloured bezel
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
       gl_FragColor = vec4(uBezel, 1.0);
       return;
     }
 
-    // Three.js CanvasTexture flipY=true flips the canvas before GPU upload,
-    // placing canvas row 0 (header/top) at UV y=1 and bottom at UV y=0.
-    // vUv.y=1 is screen-top, so sampling at (uv.x, uv.y) gives correct orientation.
     vec4 color = texture2D(uTex, uv);
 
-    // Scanlines
     if (uScanlines > 0.5) {
       if (mod(gl_FragCoord.y, 2.0) < 1.0) color.rgb *= 0.87;
     }
 
-    // Vignette — CRT phosphor edge falloff (skip for light/paper theme)
     if (uVignette > 0.5) {
       vec2  vc   = uv - 0.5;
       float vign = 1.0 - dot(vc, vc) * 1.5;
@@ -379,7 +430,7 @@ function initThree() {
 
   material = new THREE.ShaderMaterial({
     uniforms: {
-      uTex:      { value: texture },
+      uTex:       { value: texture },
       uStrength:  { value: 0.0 },
       uScanlines: { value: 1.0 },
       uVignette:  { value: 1.0 },
@@ -407,8 +458,12 @@ function sizeToContainer() {
   offCanvas.height = H
   canvasW.value    = W
   canvasH.value    = H
+  scrollX.value    = Math.max(0, Math.min(maxScrollX.value, scrollX.value))
+  scrollY.value    = Math.max(0, Math.min(maxScrollY.value, scrollY.value))
 
   if (renderer) {
+    // Track DPR so zooming the browser page keeps the canvas crisp.
+    renderer.setPixelRatio(window.devicePixelRatio || 1)
     // Update the WebGL pixel buffer AND the canvas CSS size together.
     renderer.setSize(W, H)
   } else if (canvasEl.value) {
@@ -432,10 +487,11 @@ function redraw() {
     if (!canvasEl.value) return
     drawGrid(offCanvas, {
       cols:        displayCols.value,
-      rows:        pagedRows.value,
+      rows:        filteredRows.value,
       pinnedRows:  localPinned.value,
       rowHeight:   props.rowHeight,
       scrollY:     scrollY.value,
+      scrollX:     scrollX.value,
       theme:       props.theme,
       glow:        false,
       sortColId:   sortState.value?.colId ?? null,
@@ -460,15 +516,15 @@ function redraw() {
   material.uniforms.uStrength.value  = (props.curvature / 45) * 0.55
   material.uniforms.uScanlines.value = (props.scanlines && !isPaper) ? 1.0 : 0.0
   material.uniforms.uVignette.value  = isPaper ? 0.0 : 1.0
-  // Bezel colour matches the theme background so the "CRT surround" looks natural
   ;(material.uniforms.uBezel.value as THREE.Color).set(themeColors.bg)
 
   drawGrid(offCanvas, {
     cols:        displayCols.value,
-    rows:        pagedRows.value,
+    rows:        filteredRows.value,
     pinnedRows:  localPinned.value,
     rowHeight:   props.rowHeight,
     scrollY:     scrollY.value,
+    scrollX:     scrollX.value,
     theme:       props.theme,
     glow:        props.glow,
     sortColId:   sortState.value?.colId ?? null,
@@ -485,58 +541,46 @@ function redraw() {
   renderer.render(scene, camera)
 }
 
-// ── Barrel strength (shared by hit-test and shader) ───────────────────────────
-
-function barrelStrength(): number {
-  return (props.curvature / 45) * 0.55
-}
-
 // ── Canvas coordinate mapping ─────────────────────────────────────────────────
 
 function canvasCoords(e: MouseEvent): [number, number] {
   if (!canvasEl.value) return [-1, -1]
   const rect = canvasEl.value.getBoundingClientRect()
-  return screenToCanvas(
-    e.clientX - rect.left,
-    e.clientY - rect.top,
-    canvasEl.value.width,
-    canvasEl.value.height,
-    barrelStrength(),
-  )
+  // No UV remapping in shader — screen pixel maps 1:1 to canvas pixel
+  return [e.clientX - rect.left, e.clientY - rect.top]
 }
 
 // ── Mouse wheel ───────────────────────────────────────────────────────────────
-// When pagination is active (autoPageSize fills the canvas exactly) there is no
-// intra-page overflow, so wheel navigates between pages.
-// When pagination is off, wheel scrolls within the continuous row list.
 
-let wheelDebounce = 0   // timestamp of last page-flip to avoid trackpad over-firing
+let lastHScrollTime = 0   // timestamp of last horizontal scroll event
+const H_SCROLL_LOCK_MS = 600   // suppress vertical scroll for this long after horizontal gesture
 
 function onCanvasWheel(e: WheelEvent) {
   activeFilter.value = null
+  const now = Date.now()
 
-  if (props.pagination) {
-    // Throttle page flips — trackpads fire dozens of small events per swipe
-    const now = Date.now()
-    if (now - wheelDebounce < 120) return
-    wheelDebounce = now
-
-    if (e.deltaY > 0 && currentPage.value < totalPages.value - 1) {
-      currentPage.value++
-      selectedCell.value = null
-    } else if (e.deltaY < 0 && currentPage.value > 0) {
-      currentPage.value--
-      selectedCell.value = null
-    }
+  // Horizontal scroll — any deltaX means the gesture is horizontal.
+  // Lock out vertical scroll for H_SCROLL_LOCK_MS to suppress stray deltaX=0
+  // events that trackpads emit at gesture start/end.
+  if (e.deltaX !== 0) {
+    lastHScrollTime = now
+    scrollX.value = Math.max(0, Math.min(maxScrollX.value, scrollX.value + e.deltaX))
     redraw()
-  } else {
-    // Continuous scroll — rows may overflow the canvas
-    const pinnedH = localPinned.value.length * props.rowHeight
-    const bodyH   = canvasH.value - HEADER_H - pinnedH
-    const maxY    = Math.max(0, filteredRows.value.length * props.rowHeight - bodyH)
-    scrollY.value = Math.max(0, Math.min(maxY, scrollY.value + e.deltaY))
-    redraw()
+    return
   }
+  if (e.shiftKey && e.deltaY !== 0) {
+    lastHScrollTime = now
+    scrollX.value = Math.max(0, Math.min(maxScrollX.value, scrollX.value + e.deltaY))
+    redraw()
+    return
+  }
+
+  // Still within the horizontal scroll lock window — drop this event entirely
+  if (now - lastHScrollTime < H_SCROLL_LOCK_MS) return
+
+  // Vertical — always smooth pixel scroll regardless of pagination prop
+  scrollY.value = Math.max(0, Math.min(maxScrollY.value, scrollY.value + e.deltaY))
+  redraw()
 }
 
 function onCanvasMouseMove(e: MouseEvent) {
@@ -546,18 +590,19 @@ function onCanvasMouseMove(e: MouseEvent) {
 
   const hit = hitTest(
     cx, cy, displayCols.value,
-    pagedRows.value.length, props.rowHeight,
-    scrollY.value, offCanvas.height, localPinned.value.length,
+    filteredRows.value.length, props.rowHeight,
+    scrollY.value, offCanvas.height, localPinned.value.length, scrollX.value,
   )
 
   hoveredRow.value = hit.area === 'body' ? hit.rowIdx : -1
 
   // Cursor
   if (hit.area === 'header' && hit.colIdx >= 0) {
-    const col  = displayCols.value[hit.colIdx]
-    const clx  = colLeft(hit.colIdx, displayCols.value)
+    const col     = displayCols.value[hit.colIdx]
+    const clx     = colLeft(hit.colIdx, displayCols.value)
+    const contentCx = cx + scrollX.value
     canvasEl.value!.style.cursor =
-      col && isOnResizeHandle(cx, clx, col.width) ? 'col-resize' : 'pointer'
+      col && isOnResizeHandle(contentCx, clx, col.width) ? 'col-resize' : 'pointer'
   } else if (hit.area === 'body') {
     canvasEl.value!.style.cursor = 'pointer'
   } else {
@@ -574,12 +619,26 @@ function onCanvasMouseLeave() {
 
 function onCanvasMouseDown(e: MouseEvent) {
   const [cx, cy] = canvasCoords(e)
-  if (cx < 0 || cy >= HEADER_H) return
+  if (cx < 0) return
 
+  if (cy >= HEADER_H) {
+    // Body click — start pan and stop event from bubbling to CathodeContainer
+    // (otherwise the container would interpret it as a drag/resize gesture)
+    e.stopPropagation()
+    panActive       = true
+    panMoved        = false
+    panStartX       = e.clientX
+    panStartY       = e.clientY
+    panStartScrollX = scrollX.value
+    panStartScrollY = scrollY.value
+    return
+  }
+
+  const contentCx = cx + scrollX.value
   for (let ci = 0; ci < displayCols.value.length; ci++) {
     const col = displayCols.value[ci]
     const clx = colLeft(ci, displayCols.value)
-    if (col.colDef.resizable !== false && isOnResizeHandle(cx, clx, col.width)) {
+    if (col.colDef.resizable !== false && isOnResizeHandle(contentCx, clx, col.width)) {
       startColResize(col.colId, e.clientX)
       return
     }
@@ -595,17 +654,17 @@ function onCanvasClick(e: MouseEvent) {
 
   const hit = hitTest(
     cx, cy, displayCols.value,
-    pagedRows.value.length, props.rowHeight,
-    scrollY.value, offCanvas.height, localPinned.value.length,
+    filteredRows.value.length, props.rowHeight,
+    scrollY.value, offCanvas.height, localPinned.value.length, scrollX.value,
   )
 
   // ── Header click — sort or filter ──────────────────────────────────────────
   if (hit.area === 'header' && hit.colIdx >= 0) {
-    const col = displayCols.value[hit.colIdx]
-    const clx = colLeft(hit.colIdx, displayCols.value)
+    const col       = displayCols.value[hit.colIdx]
+    const clx       = colLeft(hit.colIdx, displayCols.value)
+    const contentCx = cx + scrollX.value
 
-    if (col.colDef.filter && isOnFilterIcon(cx, clx, col.width)) {
-      // Toggle filter popup — stop propagation so onDocClick doesn't immediately close it
+    if (col.colDef.filter && isOnFilterIcon(contentCx, clx, col.width)) {
       e.stopPropagation()
       if (activeFilter.value === col.colId) {
         activeFilter.value = null
@@ -614,7 +673,8 @@ function onCanvasClick(e: MouseEvent) {
         filterPopupValue.value = colFilters[col.colId]?.startsWith('__eq__')
           ? colFilters[col.colId].slice(6)
           : (colFilters[col.colId] ?? '')
-        filterPopupPos.value   = { x: Math.max(0, clx), y: HEADER_H }
+        // Position popup at screen x (content x minus current scroll)
+        filterPopupPos.value   = { x: Math.max(0, clx - scrollX.value), y: HEADER_H }
       }
     } else if (col.colDef.sortable !== false) {
       activeFilter.value = null
@@ -630,14 +690,15 @@ function onCanvasClick(e: MouseEvent) {
 
   // ── Body click — select cell ───────────────────────────────────────────────
   if (hit.area === 'body' && hit.rowIdx >= 0 && hit.colIdx >= 0) {
-    selectedCell.value = { row: hit.rowIdx, col: hit.colIdx }
+    const absRow = hit.rowIdx
+    selectedCell.value = { row: absRow, col: hit.colIdx }
     canvasEl.value?.focus()
 
-    const row = pagedRows.value[hit.rowIdx]
+    const row = filteredRows.value[absRow]
     const col = displayCols.value[hit.colIdx]
     if (row && col) {
       emit('row-clicked',   { data: row, event: e })
-      emit('cell-selected', { data: row, row: hit.rowIdx, col: hit.colIdx, colId: col.colId })
+      emit('cell-selected', { data: row, row: absRow, col: hit.colIdx, colId: col.colId })
     }
   }
 }
@@ -648,106 +709,88 @@ function onDocClick(e: MouseEvent) {
     activeFilter.value = null
 }
 
+// ── Scroll selected column into view ─────────────────────────────────────────
+function ensureColVisible(colIdx: number) {
+  if (!canvasW.value) return
+  let colX = 0
+  for (let i = 0; i < colIdx; i++) colX += displayCols.value[i].width
+  const colW      = displayCols.value[colIdx]?.width ?? 0
+  const canvasX   = colX - scrollX.value
+  if (canvasX < 0) {
+    scrollX.value = Math.max(0, colX)
+  } else if (canvasX + colW > canvasW.value) {
+    scrollX.value = Math.min(maxScrollX.value, colX + colW - canvasW.value)
+  }
+}
+
 // ── Keyboard navigation ───────────────────────────────────────────────────────
 
 function onKeyDown(e: KeyboardEvent) {
-  const cols    = displayCols.value
-  const rows    = pagedRows.value
-  const maxCol  = cols.length - 1
-  const maxRow  = rows.length - 1
+  const cols   = displayCols.value
+  const maxCol = cols.length - 1
+  const maxRow = filteredRows.value.length - 1   // absolute
 
-  // If nothing selected, start at (0,0) on any nav key
   if (!selectedCell.value) {
     if (['ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Tab','Enter'].includes(e.key)) {
       e.preventDefault()
-      selectedCell.value = { row: 0, col: 0 }
+      selectedCell.value = { row: firstVisibleRow.value, col: 0 }
     }
     return
   }
 
-  let { row, col } = selectedCell.value
+  let { row, col } = selectedCell.value   // row is absolute
 
   const goTo = (r: number, c: number) => {
     row = Math.max(0, Math.min(maxRow, r))
     col = Math.max(0, Math.min(maxCol, c))
     selectedCell.value = { row, col }
-  }
-
-  const prevPage = () => {
-    if (currentPage.value > 0) { currentPage.value--; goTo(autoPageSize.value - 1, col) }
-  }
-  const nextPage = () => {
-    if (currentPage.value < totalPages.value - 1) { currentPage.value++; goTo(0, col) }
+    ensureRowVisible(row)
+    ensureColVisible(col)
   }
 
   switch (e.key) {
-    case 'ArrowDown':
-      e.preventDefault()
-      row < maxRow ? goTo(row + 1, col) : nextPage()
-      break
-
-    case 'ArrowUp':
-      e.preventDefault()
-      row > 0 ? goTo(row - 1, col) : prevPage()
-      break
+    case 'ArrowDown':  e.preventDefault(); goTo(row + 1, col); break
+    case 'ArrowUp':    e.preventDefault(); goTo(row - 1, col); break
 
     case 'ArrowRight':
       e.preventDefault()
-      if (col < maxCol) goTo(row, col + 1)
-      else if (row < maxRow) goTo(row + 1, 0)
-      else nextPage()
+      col < maxCol ? goTo(row, col + 1) : goTo(row + 1, 0)
       break
 
     case 'ArrowLeft':
       e.preventDefault()
-      if (col > 0) goTo(row, col - 1)
-      else if (row > 0) goTo(row - 1, maxCol)
-      else prevPage()
+      col > 0 ? goTo(row, col - 1) : goTo(row - 1, maxCol)
       break
 
     case 'Tab':
       e.preventDefault()
-      if (!e.shiftKey) {
-        if (col < maxCol) goTo(row, col + 1)
-        else if (row < maxRow) goTo(row + 1, 0)
-        else nextPage()
-      } else {
-        if (col > 0) goTo(row, col - 1)
-        else if (row > 0) goTo(row - 1, maxCol)
-        else prevPage()
-      }
+      if (!e.shiftKey) { col < maxCol ? goTo(row, col + 1) : goTo(row + 1, 0) }
+      else             { col > 0      ? goTo(row, col - 1) : goTo(row - 1, maxCol) }
       break
 
     case 'Enter':
       e.preventDefault()
-      e.shiftKey ? (row > 0 ? goTo(row - 1, col) : prevPage())
-                 : (row < maxRow ? goTo(row + 1, col) : nextPage())
+      e.shiftKey ? goTo(row - 1, col) : goTo(row + 1, col)
       break
 
     case 'Home':
       e.preventDefault()
-      if (e.ctrlKey || e.metaKey) { currentPage.value = 0; goTo(0, 0) }
-      else goTo(row, 0)
+      e.ctrlKey || e.metaKey ? goTo(0, 0) : goTo(row, 0)
       break
 
     case 'End':
       e.preventDefault()
-      if (e.ctrlKey || e.metaKey) {
-        currentPage.value = totalPages.value - 1
-        nextTick(() => goTo(pagedRows.value.length - 1, maxCol))
-      } else {
-        goTo(row, maxCol)
-      }
+      e.ctrlKey || e.metaKey ? goTo(maxRow, maxCol) : goTo(row, maxCol)
       break
 
     case 'PageDown':
       e.preventDefault()
-      nextPage()
+      goTo(Math.min(maxRow, row + visibleRowCount.value), col)
       break
 
     case 'PageUp':
       e.preventDefault()
-      prevPage()
+      goTo(Math.max(0, row - visibleRowCount.value), col)
       break
 
     case 'Escape':
@@ -758,12 +801,9 @@ function onKeyDown(e: KeyboardEvent) {
     case 'C':
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
-        const selRow = rows[row]
+        const selRow = filteredRows.value[row]
         const selCol = cols[col]
-        if (selRow && selCol) {
-          const text = formatCell(selCol, selRow)
-          navigator.clipboard?.writeText(text).catch(() => {})
-        }
+        if (selRow && selCol) navigator.clipboard?.writeText(formatCell(selCol, selRow)).catch(() => {})
       }
       break
   }
@@ -776,7 +816,6 @@ function onFilterInput(e: Event) {
   filterPopupValue.value = val
   if (val) colFilters[activeFilter.value!] = val
   else     delete colFilters[activeFilter.value!]
-  currentPage.value = 0
   emit('filter-changed')
 }
 
@@ -784,7 +823,6 @@ function clearFilter() {
   if (activeFilter.value) delete colFilters[activeFilter.value]
   filterPopupValue.value = ''
   activeFilter.value     = null
-  currentPage.value      = 0
   emit('filter-changed')
 }
 
@@ -873,7 +911,6 @@ const gridApi: GridApi = {
     for (const k of Object.keys(colFilters)) delete colFilters[k]
     quickFilter.value  = ''
     scrollY.value      = 0
-    currentPage.value  = 0
     selectedCell.value = null
     activeFilter.value = null
   },
@@ -884,27 +921,36 @@ const gridApi: GridApi = {
 // changes to primitive prop getters when the computed refs haven't changed.
 
 // Data changes
-watch([pagedRows, () => localPinned.value, displayCols, scrollY, hoveredRow, selectedCell],
+watch([filteredRows, () => localPinned.value, displayCols, scrollY, hoveredRow, selectedCell],
   () => nextTick(redraw))
 
 // Visual prop changes — each gets its own watcher so Vue definitely fires
 watch(() => props.theme,     () => redraw())
-watch(() => props.curvature, () => redraw())
+// Curvature changes the container padding (via --curvature CSS var), which shrinks
+// the canvas area. sizeToContainer must run after Vue patches the DOM so clientWidth
+// reflects the new padding before we redraw.
+watch(() => props.curvature, () => nextTick(sizeToContainer))
 watch(() => props.scanlines, () => redraw())
 watch(() => props.glow,      () => redraw())
 
 // Emit cell-selected when selection changes via keyboard
 watch(selectedCell, (sc) => {
   if (!sc) return
-  const row = pagedRows.value[sc.row]
+  const row = filteredRows.value[sc.row]   // sc.row is absolute
   const col = displayCols.value[sc.col]
   if (row && col) emit('cell-selected', { data: row, row: sc.row, col: sc.col, colId: col.colId })
 })
 
-// ── ResizeObserver ────────────────────────────────────────────────────────────
+// ── ResizeObserver + IntersectionObserver + window/zoom listeners ─────────────
 
-let resizeObserver: ResizeObserver | null = null
-let resizeRaf      = 0   // requestAnimationFrame handle for resize batching
+let resizeObserver:       ResizeObserver | null = null
+let intersectionObserver: IntersectionObserver | null = null
+let resizeRaf = 0   // requestAnimationFrame handle for resize batching
+
+function scheduleResize() {
+  cancelAnimationFrame(resizeRaf)
+  resizeRaf = requestAnimationFrame(sizeToContainer)
+}
 
 // ── WebGL context loss recovery ───────────────────────────────────────────────
 
@@ -942,12 +988,22 @@ onMounted(() => {
       canvasEl.value.addEventListener('webglcontextrestored', onContextRestored)
     }
     if (wrapEl.value) {
-      resizeObserver = new ResizeObserver(() => {
-        cancelAnimationFrame(resizeRaf)
-        resizeRaf = requestAnimationFrame(sizeToContainer)
-      })
+      // Call sizeToContainer synchronously — rAF batching adds a full frame of lag
+      // during drag resize, causing the old bitmap to visibly stretch before correction.
+      resizeObserver = new ResizeObserver(() => sizeToContainer())
       resizeObserver.observe(wrapEl.value)
+
+      // IntersectionObserver fires when the element becomes visible after an
+      // ancestor v-show / display:none toggle — ResizeObserver alone misses this.
+      intersectionObserver = new IntersectionObserver((entries) => {
+        if (entries.some(e => e.isIntersecting)) scheduleResize()
+      })
+      intersectionObserver.observe(wrapEl.value)
     }
+    // Window resize (e.g. dragging the browser window edge)
+    window.addEventListener('resize', scheduleResize)
+    // visualViewport fires on both window resize and browser zoom (ctrl+/-)
+    window.visualViewport?.addEventListener('resize', scheduleResize)
     emit('grid-ready', { api: gridApi })
   })
 })
@@ -959,6 +1015,9 @@ onUnmounted(() => {
   canvasEl.value?.removeEventListener('webglcontextlost',     onContextLost)
   canvasEl.value?.removeEventListener('webglcontextrestored', onContextRestored)
   resizeObserver?.disconnect()
+  intersectionObserver?.disconnect()
+  window.removeEventListener('resize', scheduleResize)
+  window.visualViewport?.removeEventListener('resize', scheduleResize)
   cancelAnimationFrame(resizeRaf)
   renderer?.dispose()
 })
@@ -1048,26 +1107,26 @@ const accentColor = computed(() => themeC.value.accent)
       >✕</button>
     </div>
 
-    <!-- Pagination bar -->
+    <!-- Scroll info bar -->
     <div v-if="pagination" class="cathode-pagination" :style="paginStyle">
-      <button :disabled="currentPage === 0"
-              @click="currentPage--; selectedCell = null; redraw()">◀</button>
+      <button :disabled="scrollY <= 0"       @click="pageUp()">◀</button>
 
-      <span>{{ currentPage + 1 }} / {{ totalPages }}</span>
+      <span>
+        {{ (firstVisibleRow + 1).toLocaleString() }}–{{ Math.min(filteredRows.length, lastVisibleRow + 1).toLocaleString() }}
+        / {{ filteredRows.length.toLocaleString() }}
+      </span>
 
-      <button :disabled="currentPage >= totalPages - 1"
-              @click="currentPage++; selectedCell = null; redraw()">▶</button>
+      <button :disabled="scrollY >= maxScrollY" @click="pageDown()">▶</button>
 
       <span class="cathode-page-info" :style="{ color: accentColor }">
         {{ filteredRows.length.toLocaleString() }} rows
-        · {{ autoPageSize }} per page
       </span>
 
-      <!-- Selection readout -->
+      <!-- Selection readout — absolute row index into filteredRows -->
       <span v-if="selectedCell" class="cathode-sel-readout" :style="{ color: accentColor }">
         {{ displayCols[selectedCell.col]?.colDef.headerName ?? displayCols[selectedCell.col]?.colId }}
         :
-        {{ formatCell(displayCols[selectedCell.col], pagedRows[selectedCell.row]) }}
+        {{ formatCell(displayCols[selectedCell.col], filteredRows[selectedCell.row]) }}
       </span>
     </div>
 

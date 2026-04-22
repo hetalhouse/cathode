@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import CathodeGrid      from '../src/CathodeGrid.vue'
 import CathodeWorkspace from '../src/CathodeWorkspace.vue'
 import CathodeContainer from '../src/CathodeContainer.vue'
@@ -29,6 +29,9 @@ function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length
 function fmtDate(d: Date) { return d.toISOString().replace('T', ' ').slice(0, 19) }
 
 const now = Date.now()
+const REGIMES  = ['trending', 'ranging', 'volatile']
+const SESSIONS = ['NY', 'London', 'Tokyo', 'AH']
+
 const trades = Array.from({ length: 240 }, (_, i) => {
   const idx        = i % PRODUCTS.length
   const product    = PRODUCTS[idx]
@@ -56,6 +59,14 @@ const trades = Array.from({ length: 240 }, (_, i) => {
     reason:          isOpen ? '' : pick(['tp_hit','sl_hit','timeout','manual']),
     take_profit_pct: rnd(10, 25).toFixed(2),
     rsi_at_entry:    rnd(20, 80).toFixed(1),
+    slippage_pct:    (Math.random() * 0.08).toFixed(3),
+    drawdown_pct:    (-Math.random() * 5).toFixed(2),
+    mae_pct:         (-Math.random() * 3).toFixed(2),
+    mfe_pct:         (Math.random() * 8).toFixed(2),
+    hold_days:       Math.floor(Math.random() * 14 + 1),
+    vol_score:       (Math.random() * 10).toFixed(1),
+    regime:          pick(REGIMES),
+    session:         pick(SESSIONS),
   }
 })
 
@@ -66,21 +77,47 @@ const PCT = (p: any) =>
   (p.value !== '' && p.value != null && !isNaN(Number(p.value))) ? Number(p.value).toFixed(2) + '%' : '—'
 const RIGHT = { textAlign: 'right' as const }
 
+function fmtDuration(p: any): string {
+  const entry = p.data?.entry_timestamp; const exit = p.data?.exit_timestamp
+  if (!entry || !exit) return '—'
+  const ms = new Date(exit).getTime() - new Date(entry).getTime()
+  if (ms < 0) return '—'
+  const h = Math.floor(ms / 3_600_000); const m = Math.floor((ms % 3_600_000) / 60_000)
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
 const columnDefs: ColDef[] = [
-  { headerName: 'Timestamp', width: 150, sort: 'desc', valueGetter: (p) => p.data.entry_timestamp || p.data.timestamp || '' },
-  { headerName: 'Status', width: 75, filter: true, valueGetter: (p) => p.data.status ?? 'closed',
+  { headerName: 'Entry Time',  width: 148, sort: 'desc', valueGetter: (p) => p.data.entry_timestamp || p.data.timestamp || '' },
+  { headerName: 'Exit Time',   width: 148, valueGetter: (p) => p.data.exit_timestamp || '' },
+  { headerName: 'Duration',    width: 80,  valueFormatter: fmtDuration, cellStyle: { ...RIGHT, color: '#7a90a8' } },
+  { headerName: 'Status',      width: 72,  filter: true, valueGetter: (p) => p.data.status ?? 'closed',
     cellStyle: (p) => ({ color: p.value === 'open' ? '#00bc8c' : '#e74c3c' }) },
-  { field: 'product',      width: 110, filter: true },
-  { field: 'strategy',     width: 200, filter: true },
-  { field: 'exchange',     width: 85,  filter: true },
-  { field: 'entry_price',  width: 100, headerName: 'Entry',   valueFormatter: NUM(4), cellStyle: RIGHT },
-  { field: 'exit_price',   width: 100, headerName: 'Exit',    valueFormatter: NUM(4), cellStyle: RIGHT },
-  { field: 'pnl_pct',      width: 80,  headerName: 'PnL %',   valueFormatter: PCT,
+  { field: 'product',      width: 105, filter: true },
+  { field: 'exchange',     width: 82,  filter: true },
+  { field: 'strategy',     width: 220, filter: true },
+  { field: 'entry_price',  width: 100, headerName: 'Entry',     valueFormatter: NUM(4), cellStyle: RIGHT },
+  { field: 'exit_price',   width: 100, headerName: 'Exit',      valueFormatter: NUM(4), cellStyle: RIGHT },
+  { field: 'size_base',    width: 88,  headerName: 'Size',      valueFormatter: NUM(4), cellStyle: RIGHT },
+  { field: 'notional',     width: 88,  headerName: 'Notional',  valueFormatter: NUM(2), cellStyle: RIGHT },
+  { field: 'pnl_pct',      width: 80,  headerName: 'PnL %',     valueFormatter: PCT,
     cellStyle: (p) => ({ ...RIGHT, color: Number(p.value) >= 0 ? '#00bc8c' : '#e74c3c' }) },
-  { field: 'net_pnl_pct',  width: 90,  headerName: 'Net PnL %', valueFormatter: PCT,
+  { field: 'net_pnl_pct',  width: 88,  headerName: 'Net PnL %', valueFormatter: PCT,
     cellStyle: (p) => ({ ...RIGHT, color: Number(p.value) >= 0 ? '#00bc8c' : '#e74c3c' }) },
-  { field: 'reason',       width: 90,  filter: true },
-  { field: 'notional',     width: 90,  headerName: 'Notional', valueFormatter: NUM(2), cellStyle: RIGHT },
+  { field: 'take_profit_pct', width: 72, headerName: 'TP %',    valueFormatter: PCT, cellStyle: RIGHT },
+  { field: 'rsi_at_entry',    width: 68, headerName: 'RSI',     valueFormatter: NUM(1), cellStyle: (p) => ({
+      ...RIGHT,
+      color: Number(p.value) > 65 ? '#e74c3c' : Number(p.value) < 35 ? '#00bc8c' : '#7a90a8',
+    }) },
+  { field: 'reason',          width: 88, filter: true },
+  { headerName: 'Slippage %', width: 72, field: 'slippage_pct', cellStyle: RIGHT },
+  { headerName: 'Commission', width: 88, valueGetter: (p) => (Number(p.data.notional)*0.0005).toFixed(4), cellStyle: RIGHT },
+  { headerName: 'Drawdown %', width: 84, field: 'drawdown_pct', cellStyle: { ...RIGHT, color: '#e74c3c' } },
+  { headerName: 'MAE %',      width: 72, field: 'mae_pct',      cellStyle: { ...RIGHT, color: '#e74c3c' } },
+  { headerName: 'MFE %',      width: 72, field: 'mfe_pct',      cellStyle: { ...RIGHT, color: '#00bc8c' } },
+  { headerName: 'Hold Days',  width: 76, field: 'hold_days',    cellStyle: RIGHT },
+  { headerName: 'Vol Score',  width: 76, field: 'vol_score',    cellStyle: RIGHT },
+  { headerName: 'Regime',     width: 82, field: 'regime',  filter: true },
+  { headerName: 'Session',    width: 76, field: 'session', filter: true },
 ]
 
 const defaultColDef: ColDef = { resizable: true, sortable: true }
@@ -90,10 +127,15 @@ const scanlines  = ref(true)
 const glow       = ref(true)
 const quickText  = ref('')
 const statusFilt = ref<'all' | 'open' | 'closed'>('all')
+const gridKey    = ref(0)
+
+watch(activeTab,  (tab) => { if (tab === 'grid') gridKey.value++ })
+watch(curvature,  () => { gridKey.value++ })
 
 function onGridReady(e: { api: GridApi }) {
   gridApi.value = e.api
   e.api.setGridOption('rowData', trades)
+  if (statusFilt.value !== 'all') setStatus(statusFilt.value)
 }
 function onQuickFilter(e: Event) {
   const val = (e.target as HTMLInputElement).value
@@ -197,13 +239,16 @@ const feedEvents = [
         <option value="paper">Paper (light)</option>
       </select>
 
+      <!-- Shared controls (both tabs) -->
+      <label>Curve {{ curvature }}</label>
+      <input type="range" min="0" max="45" step="1" v-model.number="curvature" style="width:110px" />
+      <label><input type="checkbox" v-model="scanlines" /> Scanlines</label>
+      <label><input type="checkbox" v-model="glow" />      Glow</label>
+
+      <div class="demo-spacer" />
+
       <!-- Grid-only controls -->
       <template v-if="activeTab === 'grid'">
-        <label>Curve {{ curvature }}</label>
-        <input type="range" min="0" max="45" step="1" v-model.number="curvature" style="width:110px" />
-        <label><input type="checkbox" v-model="scanlines" /> Scanlines</label>
-        <label><input type="checkbox" v-model="glow" />      Glow</label>
-        <div class="demo-spacer" />
         <div class="demo-btns">
           <button :class="{ active: statusFilt==='all' }"    @click="setStatus('all')">All</button>
           <button :class="{ active: statusFilt==='open' }"   @click="setStatus('open')">Open</button>
@@ -211,12 +256,12 @@ const feedEvents = [
         </div>
         <input class="demo-filter" placeholder="Quick filter…" :value="quickText" @input="onQuickFilter" />
       </template>
-      <div v-else class="demo-spacer" />
     </div>
 
     <!-- ── Grid tab ──────────────────────────────────────────────── -->
     <div v-show="activeTab === 'grid'" class="tab-content">
       <CathodeGrid
+        :key="gridKey"
         :column-defs="columnDefs"
         :default-col-def="defaultColDef"
         :row-height="28"
@@ -238,23 +283,26 @@ const feedEvents = [
       :container-titles="WS_TITLES"
     >
       <!-- TRADES — CathodeGrid inside a container -->
-      <CathodeContainer id="trades" title="Trades">
-        <CathodeGrid
-          :column-defs="columnDefs"
-          :default-col-def="defaultColDef"
-          :row-height="26"
-          :theme="theme"
-          :curvature="0"
-          :scanlines="scanlines"
-          :glow="false"
-          :pagination="true"
-          :pagination-page-size="50"
-          @grid-ready="onGridReady"
-        />
+      <CathodeContainer id="trades" title="Trades" :curvature="curvature" canvas>
+        <template #default="{ resizeKey }">
+          <CathodeGrid
+            :key="resizeKey"
+            :column-defs="columnDefs"
+            :default-col-def="defaultColDef"
+            :row-height="26"
+            :theme="theme"
+            :curvature="curvature"
+            :scanlines="scanlines"
+            :glow="false"
+            :pagination="true"
+            :pagination-page-size="50"
+            @grid-ready="onGridReady"
+          />
+        </template>
       </CathodeContainer>
 
       <!-- FLEET MONITOR — colored agent cells -->
-      <CathodeContainer id="monitor" title="Fleet Monitor">
+      <CathodeContainer id="monitor" title="Fleet Monitor" :curvature="curvature">
         <div class="mock-monitor">
           <div v-for="(strat, si) in STRATS" :key="si" class="mon-row">
             <div class="mon-label">{{ strat }}</div>
@@ -273,7 +321,7 @@ const feedEvents = [
       </CathodeContainer>
 
       <!-- SCORECARD -->
-      <CathodeContainer id="scorecard" title="Scorecard">
+      <CathodeContainer id="scorecard" title="Scorecard" :curvature="curvature">
         <div class="mock-scorecard">
           <div class="sc-head">
             <span class="sc-hcell sc-wide">Strategy</span>
@@ -291,7 +339,7 @@ const feedEvents = [
       </CathodeContainer>
 
       <!-- POSITIONS -->
-      <CathodeContainer id="positions" title="Positions">
+      <CathodeContainer id="positions" title="Positions" :curvature="curvature">
         <div class="mock-positions">
           <div v-if="!openTrades.length" class="mock-empty">No open positions</div>
           <div v-for="t in openTrades" :key="t.entry_timestamp + t.product" class="pos-row">
@@ -305,7 +353,7 @@ const feedEvents = [
       </CathodeContainer>
 
       <!-- SIGNAL FEED -->
-      <CathodeContainer id="feed" title="Signal Feed">
+      <CathodeContainer id="feed" title="Signal Feed" :curvature="curvature">
         <div class="mock-feed">
           <div
             v-for="(ev, i) in feedEvents"
