@@ -68,7 +68,13 @@ function setMinimized(id: string, v: boolean) {
 
 function setMaximized(id: string, v: boolean) {
   containers.value[id].maximized = v
-  if (v) containers.value[id].minimized = false
+  if (v) {
+    containers.value[id].minimized = false
+    // Bring to front when maximizing — otherwise the maximized panel can
+    // sit behind another container that was clicked more recently and the
+    // user sees the maximized panel covered by the other one.
+    bringToFront(id)
+  }
   save()
 }
 
