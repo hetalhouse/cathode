@@ -22,7 +22,9 @@ export interface GridColors {
 
 export const THEME_COLORS: Record<string, GridColors> = {
   none: {
-    bg: 'rgba(17,24,39,0.82)', headerBg: 'rgba(18,18,42,0.88)',
+    // bg fully transparent so the parent (glass CathodeContainer) shows
+    // through. Header keeps modest opacity for contrast against rows.
+    bg: 'rgba(0,0,0,0)', headerBg: 'rgba(18,18,42,0.65)',
     text: '#e8f2ff', textHeader: '#6a90b8', border: '#2a3a50',
     accent: '#40a0f0', rowAlt: 'rgba(255,255,255,0.018)',
   },

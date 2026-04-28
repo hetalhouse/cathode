@@ -2,8 +2,10 @@ import { defineComponent as je, ref as L, reactive as Ne, computed as X, watch a
 import * as te from "three";
 const Ce = {
   none: {
-    bg: "rgba(17,24,39,0.82)",
-    headerBg: "rgba(18,18,42,0.88)",
+    // bg fully transparent so the parent (glass CathodeContainer) shows
+    // through. Header keeps modest opacity for contrast against rows.
+    bg: "rgba(0,0,0,0)",
+    headerBg: "rgba(18,18,42,0.65)",
     text: "#e8f2ff",
     textHeader: "#6a90b8",
     border: "#2a3a50",
