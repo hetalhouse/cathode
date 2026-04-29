@@ -39,7 +39,10 @@ export const THEME_COLORS: Record<string, GridColors> = {
     accent: '#ffd060', rowAlt: 'rgba(255,176,0,0.025)',
   },
   paper: {
-    bg: '#f6f6f6', headerBg: '#ffffff',
+    // bg fully transparent so the parent (glass CathodeContainer) shows
+    // through in day mode — same propagation pattern as 'none' (1c79043).
+    // Header keeps a subtle white tint for contrast against rows.
+    bg: 'rgba(0,0,0,0)', headerBg: 'rgba(255,255,255,0.65)',
     text: '#222222', textHeader: '#158cba', border: '#dee2e6',
     accent: '#158cba', rowAlt: 'rgba(21,140,186,0.04)',
   },
