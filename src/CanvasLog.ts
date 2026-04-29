@@ -1,0 +1,356 @@
+/**
+ * CanvasLog.ts — canvas2d log/terminal renderer for cathode
+ *
+ * Draws a scrolling log feed (entries with optional timestamps + levels) to an
+ * HTMLCanvasElement. The canvas is fed to the same THREE.CanvasTexture +
+ * barrel-distortion shader as CanvasGrid for visual consistency.
+ *
+ * Pure render — wrapping & layout are computed by the Vue wrapper and passed
+ * in as `visualLines`, so this function stays cheap on every frame.
+ */
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export type LogLevel = 'info' | 'warn' | 'error' | 'debug' | 'success'
+
+export interface LogEntry {
+  /** Optional timestamp — number = ms epoch, string = pre-formatted or ISO. */
+  ts?:    number | string
+  /** The line text. May contain \n (treated as hard line break). */
+  text:   string
+  /** Drives text colour. Defaults to 'info'. */
+  level?: LogLevel
+}
+
+/**
+ * One visible row after wrapping. Multi-line entries produce N visual lines;
+ * only the first carries the timestamp string (others align under it).
+ */
+export interface VisualLine {
+  entryIdx:    number
+  text:        string
+  level:       LogLevel
+  timestamp:   string    // empty on continuation lines
+  isFirstFrag: boolean   // true on the first wrapped fragment of an entry
+}
+
+// ── Theme palettes ────────────────────────────────────────────────────────────
+
+export interface LogColors {
+  bg:           string
+  text:         string
+  border:       string
+  accent:       string
+  rowAlt:       string
+  levelInfo:    string
+  levelWarn:    string
+  levelError:   string
+  levelDebug:   string
+  levelSuccess: string
+  timestamp:    string
+}
+
+export const LOG_THEME_COLORS: Record<string, LogColors> = {
+  none: {
+    // bg fully transparent so the parent (glass CathodeContainer) shows
+    // through. Same propagation pattern as CanvasGrid's `none` theme.
+    bg: 'rgba(0,0,0,0)',
+    text:         '#e8f2ff',
+    border:       '#2a3a50',
+    accent:       '#40a0f0',
+    rowAlt:       'rgba(255,255,255,0.018)',
+    levelInfo:    '#c0d0e0',
+    levelWarn:    '#f0c878',
+    levelError:   '#f38080',
+    levelDebug:   '#7090a8',
+    levelSuccess: '#80d0a0',
+    timestamp:    '#6a90b8',
+  },
+  paper: {
+    // bg fully transparent for day-mode glass propagation.
+    bg: 'rgba(0,0,0,0)',
+    text:         '#222222',
+    border:       '#dee2e6',
+    accent:       '#158cba',
+    rowAlt:       'rgba(21,140,186,0.04)',
+    levelInfo:    '#444444',
+    levelWarn:    '#a06000',
+    levelError:   '#c0392b',
+    levelDebug:   '#888888',
+    levelSuccess: '#1a8038',
+    timestamp:    '#888888',
+  },
+  phosphor: {
+    bg:           '#060d06',
+    text:         '#33ff33',
+    border:       '#0a250a',
+    accent:       '#80ff80',
+    rowAlt:       'rgba(51,255,51,0.025)',
+    levelInfo:    '#33ff33',
+    levelWarn:    '#bbff33',
+    levelError:   '#ff5050',
+    levelDebug:   '#22aa22',
+    levelSuccess: '#00ff80',
+    timestamp:    '#00cc00',
+  },
+  amber: {
+    bg:           '#0a0700',
+    text:         '#ffb000',
+    border:       '#2a1500',
+    accent:       '#ffd060',
+    rowAlt:       'rgba(255,176,0,0.025)',
+    levelInfo:    '#ffb000',
+    levelWarn:    '#ffd000',
+    levelError:   '#ff5000',
+    levelDebug:   '#aa7000',
+    levelSuccess: '#ffe040',
+    timestamp:    '#ffd000',
+  },
+}
+
+export function levelColor(c: LogColors, level: LogLevel): string {
+  switch (level) {
+    case 'warn':    return c.levelWarn
+    case 'error':   return c.levelError
+    case 'debug':   return c.levelDebug
+    case 'success': return c.levelSuccess
+    case 'info':
+    default:        return c.levelInfo
+  }
+}
+
+// ── Layout constants ──────────────────────────────────────────────────────────
+
+export const FONT_SIZE   = 12
+export const LINE_HEIGHT = 18      // px per visual line
+export const PADDING_X   = 10
+export const PADDING_Y   = 6
+
+/** Monospace font for terminal aesthetic. */
+export const FONT = `${FONT_SIZE}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
+
+// ── Word wrapping ─────────────────────────────────────────────────────────────
+
+/**
+ * Wrap a single string to fit within `maxWidth` (px) using `ctx` for measurement.
+ * Hard \n breaks are honoured. Long unbroken tokens are sliced character-wise.
+ */
+export function wrapText(
+  ctx:      CanvasRenderingContext2D,
+  text:     string,
+  maxWidth: number,
+): string[] {
+  if (maxWidth <= 0 || !text) return [text]
+  const out: string[] = []
+
+  for (const hardLine of text.split('\n')) {
+    if (!hardLine) { out.push(''); continue }
+    if (ctx.measureText(hardLine).width <= maxWidth) {
+      out.push(hardLine)
+      continue
+    }
+
+    const words = hardLine.split(/(\s+)/)   // keep whitespace tokens
+    let current = ''
+    for (const tok of words) {
+      const candidate = current + tok
+      if (ctx.measureText(candidate).width <= maxWidth) {
+        current = candidate
+      } else {
+        if (current) {
+          out.push(current.replace(/\s+$/, ''))
+          current = ''
+        }
+        // Token alone exceeds maxWidth — slice character-wise
+        if (ctx.measureText(tok).width > maxWidth) {
+          let frag = ''
+          for (const ch of tok) {
+            if (ctx.measureText(frag + ch).width > maxWidth) {
+              if (frag) out.push(frag)
+              frag = ch
+            } else {
+              frag += ch
+            }
+          }
+          current = frag
+        } else {
+          current = tok.replace(/^\s+/, '')   // drop leading whitespace on new line
+        }
+      }
+    }
+    if (current) out.push(current.replace(/\s+$/, ''))
+  }
+
+  return out.length ? out : ['']
+}
+
+// ── Timestamp formatting ──────────────────────────────────────────────────────
+
+/** Default formatter — HH:mm:ss for numeric ms epoch, raw string otherwise. */
+export function defaultFormatTs(ts: number | string): string {
+  if (typeof ts === 'number') {
+    const d = new Date(ts)
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mm = String(d.getMinutes()).padStart(2, '0')
+    const ss = String(d.getSeconds()).padStart(2, '0')
+    return `${hh}:${mm}:${ss}`
+  }
+  return ts
+}
+
+/**
+ * Compute pixel width of the widest formatted timestamp + a small gap.
+ * Used by the Vue wrapper to reserve a column on the left when timestamps
+ * are enabled.
+ */
+export function measureTimestampWidth(
+  ctx:    CanvasRenderingContext2D,
+  sample: string,
+): number {
+  return Math.ceil(ctx.measureText(sample).width) + 12
+}
+
+// ── Build visual lines (called by the Vue wrapper) ────────────────────────────
+
+export interface BuildVisualLinesOpts {
+  entries:        LogEntry[]
+  ctx:            CanvasRenderingContext2D
+  textMaxWidth:   number   // px available for the text column (after timestamp prefix)
+  showTimestamps: boolean
+  formatTs?:      (ts: number | string) => string
+  wordWrap:       boolean
+}
+
+export function buildVisualLines(opts: BuildVisualLinesOpts): VisualLine[] {
+  const { entries, ctx, textMaxWidth, showTimestamps, wordWrap } = opts
+  const fmt = opts.formatTs ?? defaultFormatTs
+
+  // Use the monospace font we'll render with so wrap math is accurate
+  ctx.font = FONT
+
+  const out: VisualLine[] = []
+
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]
+    const lvl: LogLevel = e.level ?? 'info'
+    const ts = showTimestamps && e.ts != null ? fmt(e.ts) : ''
+
+    const frags = wordWrap
+      ? wrapText(ctx, e.text, textMaxWidth)
+      : e.text.split('\n')
+
+    for (let f = 0; f < frags.length; f++) {
+      out.push({
+        entryIdx:    i,
+        text:        frags[f],
+        level:       lvl,
+        timestamp:   f === 0 ? ts : '',
+        isFirstFrag: f === 0,
+      })
+    }
+  }
+
+  return out
+}
+
+// ── Main draw ─────────────────────────────────────────────────────────────────
+
+export interface DrawLogOpts {
+  visualLines:    VisualLine[]
+  scrollY:        number       // px offset from top of content
+  theme:          string
+  glow:           boolean
+  showTimestamps: boolean
+  timestampWidth: number       // px reserved on the left for the timestamp column
+  hoveredLine:    number       // index in visualLines, -1 = none
+}
+
+export function drawLog(canvas: HTMLCanvasElement, opts: DrawLogOpts): void {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const W = canvas.width
+  const H = canvas.height
+  const c = LOG_THEME_COLORS[opts.theme] ?? LOG_THEME_COLORS['none']
+
+  // Background
+  ctx.clearRect(0, 0, W, H)
+  ctx.fillStyle = c.bg
+  ctx.fillRect(0, 0, W, H)
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, W, H)
+  ctx.clip()
+
+  ctx.font         = FONT
+  ctx.textBaseline = 'middle'
+
+  const lines     = opts.visualLines
+  const tsX       = PADDING_X
+  const textX     = opts.showTimestamps ? PADDING_X + opts.timestampWidth : PADDING_X
+  const startLine = Math.max(0, Math.floor((opts.scrollY - PADDING_Y) / LINE_HEIGHT))
+  const endLine   = Math.min(lines.length, Math.ceil((opts.scrollY + H - PADDING_Y) / LINE_HEIGHT) + 1)
+
+  for (let li = startLine; li < endLine; li++) {
+    const line = lines[li]
+    const y    = PADDING_Y + li * LINE_HEIGHT - opts.scrollY + LINE_HEIGHT / 2
+
+    // Alternating-entry tint (subtle band per entry, not per visual line)
+    if (line.entryIdx % 2 === 1 && line.isFirstFrag) {
+      ctx.fillStyle = c.rowAlt
+      // Fill all visual lines belonging to this entry — find the run length
+      let run = 1
+      while (li + run < endLine && lines[li + run].entryIdx === line.entryIdx) run++
+      ctx.fillRect(0, y - LINE_HEIGHT / 2, W, LINE_HEIGHT * run)
+    }
+
+    // Hover highlight
+    if (li === opts.hoveredLine) {
+      ctx.fillStyle = 'rgba(255,255,255,0.045)'
+      ctx.fillRect(0, y - LINE_HEIGHT / 2, W, LINE_HEIGHT)
+    }
+
+    // Timestamp column (only on first fragment of an entry)
+    if (opts.showTimestamps && line.timestamp) {
+      ctx.fillStyle = c.timestamp
+      ctx.textAlign = 'left'
+      if (opts.glow) { ctx.shadowBlur = 3; ctx.shadowColor = c.timestamp }
+      ctx.fillText(line.timestamp, tsX, y)
+      ctx.shadowBlur = 0
+    }
+
+    // Body text — coloured by level
+    const color = levelColor(c, line.level)
+    ctx.fillStyle = color
+    ctx.textAlign = 'left'
+    if (opts.glow) { ctx.shadowBlur = 4; ctx.shadowColor = color }
+    ctx.fillText(line.text, textX, y)
+    ctx.shadowBlur = 0
+  }
+
+  ctx.restore()
+}
+
+// ── Hit-testing ───────────────────────────────────────────────────────────────
+
+/**
+ * Map a canvas-space y-coordinate to the visual-line index. Returns -1 when
+ * outside the rendered range.
+ */
+export function lineHitTest(
+  cy:          number,
+  scrollY:     number,
+  visibleLen:  number,
+): number {
+  if (cy < 0) return -1
+  const li = Math.floor((cy + scrollY - PADDING_Y) / LINE_HEIGHT)
+  if (li < 0 || li >= visibleLen) return -1
+  return li
+}
+
+// ── Geometry helpers ──────────────────────────────────────────────────────────
+
+export function totalContentHeight(visualLineCount: number): number {
+  return PADDING_Y * 2 + visualLineCount * LINE_HEIGHT
+}

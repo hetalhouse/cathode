@@ -110,10 +110,16 @@ function onResizeUp() {
   resizeKey.value++
 }
 
-// ── Resize key — increments after drag-resize, reset, or curvature change ─────
+// ── Resize key — increments after drag-resize or reset ───────────────────────
+// NOTE: previously also bumped on `props.curvature` change, but that caused
+// the slotted CathodeGrid (or any keyed canvas component) to unmount/remount
+// on every drag tick of an upstream curve slider — at 60 Hz that thrashes
+// WebGL contexts and the browser starts evicting the oldest live one,
+// blanking unrelated canvases (e.g. CathodeLog in another tab). CathodeGrid
+// has its own internal curvature watcher that updates the shader uniform
+// without remount, so this re-key is unnecessary.
 const resizeKey = ref(0)
 watch(resetTick, () => { resizeKey.value++ })
-watch(() => props.curvature, () => { resizeKey.value++ })
 
 onUnmounted(() => {
   document.removeEventListener('mousemove', onDragMove)

@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import CathodeGrid      from '../src/CathodeGrid.vue'
+import CathodeLog       from '../src/CathodeLog.vue'
 import CathodeWorkspace from '../src/CathodeWorkspace.vue'
 import CathodeContainer from '../src/CathodeContainer.vue'
 import { buildDefaultLayout } from '../src/useCathodeLayout'
 import type { ColDef, GridApi } from '../src/types'
 import type { ContainerState } from '../src/useCathodeLayout'
+import type { LogEntry } from '../src/CanvasLog'
 
 // ── Shared state ──────────────────────────────────────────────────────────────
-type DemoTab = 'grid' | 'workspace'
+type DemoTab = 'grid' | 'workspace' | 'log'
 const activeTab = ref<DemoTab>('workspace')
 
 type Theme = 'none' | 'phosphor' | 'amber' | 'paper'
@@ -130,7 +132,13 @@ const statusFilt = ref<'all' | 'open' | 'closed'>('all')
 const gridKey    = ref(0)
 
 watch(activeTab,  (tab) => { if (tab === 'grid') gridKey.value++ })
-watch(curvature,  () => { gridKey.value++ })
+// NOTE: do NOT bump gridKey on curvature change. It used to work as a brute-
+// force way to apply the new curvature to the grid, but at slider-drag
+// rate (60+ Hz) it forces continuous unmount/remount of CathodeGrid →
+// rapid WebGL context churn → the browser evicts the OLDEST live context
+// (the Log tab's) → its canvas goes blank. CathodeGrid has its own internal
+// `watch(() => props.curvature, ...)` that handles curvature updates without
+// remount, so this re-key is unnecessary.
 
 function onGridReady(e: { api: GridApi }) {
   gridApi.value = e.api
@@ -211,6 +219,34 @@ const feedEvents = [
   { ts: '2h',  icon: '▲', sym: 'SOL',  strat: 'keltner breakout',   pnl: null },
   { ts: '3h',  icon: '✓', sym: 'AVAX', strat: 'donchian breakout',  pnl: '+1.12%', pos: true },
 ]
+
+// ── Log tab — CathodeLog demo entries ─────────────────────────────────────────
+const LOG_TEMPLATES: Array<{ level: LogEntry['level']; text: string }> = [
+  { level: 'info',    text: 'Scanner cycle complete — 0 candidates passed filter' },
+  { level: 'info',    text: 'Heartbeat OK · agents 35/35 healthy · uptime 4h 12m' },
+  { level: 'success', text: 'BB_BREAKOUT entry filled · KO-USDC @ 79.68 · size 122.63 · notional $9,771.15' },
+  { level: 'warn',    text: 'API rate limit warning — 87/100 calls in last 60s window, backing off' },
+  { level: 'error',   text: 'Loop error: code: 429, message: too many requests' },
+  { level: 'debug',   text: 'macd.bullish=true adx.trending=true adx.bullish=true trend.up=true → MACD_TREND eligible' },
+  { level: 'info',    text: 'Regime classified FLAT (btc 0.6%, hysteresis sticky)' },
+  { level: 'success', text: 'PROFIT_FLOOR_FLAT exit · PENGU-USDC · entry 0.009869 → 0.010183 · +2.53%' },
+  { level: 'warn',    text: 'Position drift: ZEC-USDC underwater 12h · holding for signal exit' },
+  { level: 'info',    text: 'Spec reload: macd_cross_daily — scan_whitelist now ["ETH-USD","SOL-USD"] (was wide)' },
+  { level: 'error',   text: 'L3-USDC × macd_cross_daily SL hit at -13.44% in 4h — flagging for watchlist' },
+  { level: 'debug',   text: 'Wrapping a deliberately long single-line entry to exercise word-wrap behaviour. The component should split this across multiple visual lines without breaking the surrounding theme, and continuation lines should align under the text column rather than the timestamp prefix. This is also a soft-test of monospace measurement under different canvas widths.' },
+]
+
+const logEntries = ref<LogEntry[]>([])
+function seedLogEntries() {
+  const out: LogEntry[] = []
+  const base = Date.now() - 1000 * 60 * 30
+  for (let i = 0; i < 80; i++) {
+    const tpl = LOG_TEMPLATES[i % LOG_TEMPLATES.length]
+    out.push({ ts: base + i * 22_000, text: tpl.text, level: tpl.level })
+  }
+  logEntries.value = out
+}
+seedLogEntries()
 </script>
 
 <template>
@@ -227,6 +263,9 @@ const feedEvents = [
         </button>
         <button :class="['tab-btn', { active: activeTab === 'grid' }]" @click="activeTab = 'grid'">
           Grid
+        </button>
+        <button :class="['tab-btn', { active: activeTab === 'log' }]" @click="activeTab = 'log'">
+          Log
         </button>
       </div>
 
@@ -272,6 +311,17 @@ const feedEvents = [
         :pagination="true"
         :pagination-page-size="50"
         @grid-ready="onGridReady"
+      />
+    </div>
+
+    <!-- ── Log tab ───────────────────────────────────────────────── -->
+    <div v-show="activeTab === 'log'" class="tab-content">
+      <CathodeLog
+        :entries="logEntries"
+        :theme="theme"
+        :curvature="curvature"
+        :scanlines="scanlines"
+        :glow="glow"
       />
     </div>
 
