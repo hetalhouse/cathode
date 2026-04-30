@@ -75,7 +75,7 @@ the title bar + drag handles, NOT a separate component.
 
 ---
 
-## Phase 3 — CathodeCandle  ← in progress
+## Phase 3 — CathodeCandle  ✓ (completed 2026-04-30)
 
 A native canvas OHLCV candlestick chart with the full WebGL shader pipeline
 (barrel distortion, scanlines, glow) — the same architecture as CathodeGrid
@@ -144,21 +144,36 @@ draws them. Consumers (dashboard, future helper) will compute via
 | 7 | Demo: `Indicators` checkbox to toggle overlays+markers (dual-purpose: visible UX + e2e test handle) | ✓ done |
 | 8 | Playwright test: toggle on/off, screenshot byte-deltas catch a non-rendering regression; re-enable restores state | ✓ done (1 new test, 16 total) |
 
-### PR 3 — dashboard ChartPanel integration  ← next
+### PR 2.7 — paper-mode color scheme + financial price labels  ✓ (2026-04-30)
 
-| # | Item | Notes |
-|---|------|-------|
-| 1 | Replace dashboard's klinecharts-based ChartPanel with CathodeCandle | |
-| 2 | Verify trade markers still surface (entry/exit dots overlaid on candles) | |
-| 3 | Verify focused-product switching repopulates candles correctly | |
-| 4 | Verify live candle stream updates push the right edge | |
-| 5 | Drop the `klinecharts` dep from dashboard once parity is confirmed | |
+| # | Item | Status |
+|---|------|--------|
+| 1 | `panelBg` / `panelBgSolid` per-theme — legend, OHLCV strip, marker tooltip, marker triangle outline now match the active theme (paper gets translucent white instead of dark slabs) | ✓ done |
+| 2 | Marker triangle stroke 1.5px → 1px (less chunky on light backgrounds) | ✓ done |
+| 3 | Price-axis labels via `Intl.NumberFormat('en-US')` — 65,000.00 instead of 65000, magnitude-based decimal scale preserved | ✓ done |
+| 4 | Playwright test — paper theme produces visibly different (non-blank, error-free) screenshot from dark | ✓ done (1 new test, 21 total) |
 
-### Phase 3 → done when
-- CathodeCandle exported from cathode index
-- ChartPanel in dashboard uses it (klinecharts dep removed)
-- Zoom, pan, crosshair all working
-- WebGL fallback (2D blit) works as it does for CathodeGrid / CathodeLog
+### PR 3 — dashboard ChartPanel + FocusedOverlay integration  ✓ (2026-04-30)
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | New `flat: boolean` prop on CathodeCandle — opts out of Three.js entirely (uses the existing 2D-fallback path). Required because mini-chart grids exceed Chrome's ~16 WebGL-context cap. | ✓ done |
+| 2 | dashboard `ChartPanel.vue` — replaced klinecharts mini-cards with `<CathodeCandle :flat>` (slot-w 3, no curvature/scanlines/glow at 180×120) | ✓ done |
+| 3 | dashboard `FocusedOverlay.vue` — replaced klinecharts main chart with `<CathodeCandle>` (full WebGL pipeline: BB(20,2) overlay band + entry/exit triangle markers, theme-aware) | ✓ done |
+| 4 | Dropped `klinecharts` dep from dashboard `package.json` | ✓ done |
+| 5 | Dashboard e2e — `chart-panels.spec.ts` covers 3-card mini-chart render + click-to-focus with markers (mocked candles + trades) | ✓ done (2 new tests, 14 total) |
+
+> **Reactivity gotcha caught here:** the first test failed with `candleLen:0`
+> because `loadCandles(card)` held a *pre-push* reference to the card. Vue 3
+> wraps array-pushed objects in a reactive proxy, and writes to the original
+> reference are not tracked. Fix: look the card up *through* `cards.value`
+> after push to get the proxy.
+
+### Phase 3 → done when  ✓ (2026-04-30)
+- ✓ CathodeCandle exported from cathode index
+- ✓ ChartPanel in dashboard uses it (klinecharts dep removed)
+- ✓ Zoom, pan, crosshair all working
+- ✓ WebGL fallback (2D blit) works as it does for CathodeGrid / CathodeLog
 
 ---
 
