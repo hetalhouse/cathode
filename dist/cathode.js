@@ -1687,7 +1687,7 @@ const Ft = 0.25, _t = 6, jl = `
           markers: l.markers
         });
         const B = n.value.getContext("2d");
-        B && B.drawImage(d, 0, 0);
+        B && (B.clearRect(0, 0, n.value.width, n.value.height), B.drawImage(d, 0, 0));
         return;
       }
       if (!s || !g || !h) return;
@@ -1808,7 +1808,7 @@ const Ft = 0.25, _t = 6, jl = `
       }, null, 544)
     ], 4));
   }
-}), Cn = /* @__PURE__ */ qe(Jl, [["__scopeId", "data-v-a6eef348"]]), gt = W(0), ft = 28, Pe = 12;
+}), Cn = /* @__PURE__ */ qe(Jl, [["__scopeId", "data-v-3e0a2f42"]]), gt = W(0), ft = 28, Pe = 12;
 let dt = 10, et = "cathode.layout", tt = !1;
 const ie = W({});
 function Ql(t, l = "cathode.layout") {

@@ -245,7 +245,14 @@ function redraw() {
       markers:        props.markers,
     })
     const ctx2d = canvasEl.value.getContext('2d')
-    if (ctx2d) ctx2d.drawImage(offCanvas, 0, 0)
+    if (ctx2d) {
+      // Clear before composite — `none`/`paper` themes have a transparent
+      // background, so drawImage would layer on top of the previous frame.
+      // Without this, translucent overlays (BB band fillAlpha) accumulate
+      // into solid colour after ~13 frames and axis/OHLCV labels smear.
+      ctx2d.clearRect(0, 0, canvasEl.value.width, canvasEl.value.height)
+      ctx2d.drawImage(offCanvas, 0, 0)
+    }
     return
   }
 

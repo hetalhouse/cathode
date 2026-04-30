@@ -422,6 +422,74 @@ test.describe('CathodeCandle', () => {
     expect(watch.entries).toEqual([]);
   });
 
+  test('flat mode does not accumulate across redraws (transparent-bg stacking bug)', async ({ page }) => {
+    // Regression: themes with `bg: rgba(0,0,0,0)` (none, paper) caused the
+    // 2D fallback to layer drawImage on top of the previous frame because
+    // the visible canvas was never cleared. After ~13 redraws an 0.08-alpha
+    // BB band saturated to opaque, and axis/OHLCV labels smeared. We detect
+    // this by reading pixels directly — saturation pulls average alpha up.
+    const watch = collectConsoleErrors(page);
+    await page.goto('/');
+    await page.getByRole('button', { name: /^Candle$/ }).click();
+    const canvas = page.locator('.tab-content:visible canvas').first();
+    await canvas.waitFor({ state: 'visible' });
+    await page.waitForTimeout(300);
+
+    // Force flat mode + indicators on (overlays are what visibly accumulate)
+    await page.getByTestId('cf-flat').check();
+    await page.waitForTimeout(300);
+    if (!(await page.getByTestId('cf-show-indicators').isChecked())) {
+      await page.getByTestId('cf-show-indicators').check();
+    }
+    await page.waitForTimeout(300);
+
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('canvas not found');
+
+    // Trigger many hover redraws — every mousemove updates the hover ref,
+    // which fires a redraw via Vue's reactive watcher.
+    for (let i = 0; i < 50; i++) {
+      const t = i / 49;
+      await page.mouse.move(
+        box.x + box.width * (0.3 + t * 0.5),
+        box.y + box.height * (0.4 + Math.sin(t * Math.PI) * 0.1),
+        { steps: 1 },
+      );
+    }
+    await page.waitForTimeout(250);
+
+    // Sample pixels directly. Without the clearRect, the BB band region
+    // (mid-pane, where it always overlays) saturates to its base alpha
+    // multiplied by the number of redraws.
+    const stats = await canvas.evaluate((c: HTMLCanvasElement) => {
+      // Visible canvas is in `2d` mode under flat path; getContext('2d')
+      // returns the existing context.
+      const ctx = c.getContext('2d');
+      if (!ctx) return { ok: false, avgAlpha: 0, opaqueRatio: 0, w: c.width, h: c.height };
+      const data = ctx.getImageData(0, 0, c.width, c.height).data;
+      let sumA = 0, opaque = 0, count = 0;
+      for (let i = 3; i < data.length; i += 4) {
+        sumA += data[i];
+        if (data[i] >= 250) opaque++;
+        count++;
+      }
+      return { ok: true, avgAlpha: sumA / count, opaqueRatio: opaque / count, w: c.width, h: c.height };
+    });
+    expect(stats.ok, '2d context not available — flat path did not engage').toBe(true);
+    // Empirical baselines (sampled at 1280×684, 50 hover redraws, BB+EMA
+    // overlays on): clean flat draw ~ avgAlpha 23 / opaque 3.4%.
+    // With the bug ~ avgAlpha 67 / opaque 12.4%. Set ceilings at 2× the
+    // clean baseline.
+    expect(stats.avgAlpha,
+      `avg alpha ${stats.avgAlpha.toFixed(1)} suggests redraw stacking — clean baseline ~23`,
+    ).toBeLessThan(45);
+    expect(stats.opaqueRatio,
+      `${(stats.opaqueRatio * 100).toFixed(1)}% of pixels are opaque — clean baseline ~3.4%`,
+    ).toBeLessThan(0.08);
+
+    expect(watch.entries).toEqual([]);
+  });
+
   test('flat mode skips Three.js — non-blank, differs from WebGL output, no GL errors', async ({ page }) => {
     const watch = collectConsoleErrors(page);
     await page.goto('/');
