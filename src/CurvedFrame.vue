@@ -76,17 +76,36 @@ const themeVars = computed<CSSProperties>(() => {
   }
 })
 
-// CSS curvature: a tiny perspective + rotateX to suggest CRT bulge without
-// actually distorting hit-test geometry. Capped at low values.
+// CSS curvature: stack of effects that together suggest a CRT bulge
+// without actually distorting live HTML (which would kill hit-testing):
+//   - rotateX  — top tilts backward (real CRT physics; subtle but
+//                directional)
+//   - perspective — drives the rotateX foreshortening
+//   - border-radius — rounds the corners as curvature increases (real
+//                CRTs have rounded glass corners)
+//   - scale    — slight outward expansion at high curvature mimics the
+//                bulge at the centre
+// Capped values are chosen empirically — past these the slot content
+// starts to feel disorienting, especially with text.
 const contentTransform = computed<CSSProperties>(() => {
-  if (props.curvature <= 0) return {}
-  // Map 0..45 → 0..1.4 deg of rotateX; cap perspective at 800px.
-  const tilt = (props.curvature / 45) * 1.4
-  const persp = 800 + (props.curvature / 45) * 600
+  if (props.curvature <= 0) return { transform: 'none' }
+  const t = props.curvature / 45                 // 0..1
+  const tilt   = t * 5                           // 0..5 deg rotateX
+  const scale  = 1 + t * 0.025                   // 1..1.025
+  const persp  = 1200 - t * 600                  // 1200..600 (smaller = more perspective)
   return {
     perspective: `${persp}px`,
-    transform:   `rotateX(${tilt}deg)`,
+    transform:   `scale(${scale}) rotateX(${tilt}deg)`,
   }
+})
+
+const bezelStyle = computed<CSSProperties>(() => {
+  // Corner roundness scales with curvature — real CRT glass has rounded
+  // corners that get more pronounced on more curved tubes.
+  if (props.curvature <= 0) return {}
+  const t = props.curvature / 45
+  const radius = 6 + t * 22                      // 6..28px
+  return { borderRadius: `${radius}px` }
 })
 
 // Composite class list — used by tests and consumer styling hooks.
@@ -101,7 +120,7 @@ const wrapClass = computed(() => ({
 <template>
   <div :class="wrapClass" :style="themeVars">
     <!-- Vignette (::before) and scanlines (::after) live on this layer -->
-    <div class="curved-frame-bezel">
+    <div class="curved-frame-bezel" :style="bezelStyle">
       <div class="curved-frame-content" :style="contentTransform">
         <slot />
       </div>

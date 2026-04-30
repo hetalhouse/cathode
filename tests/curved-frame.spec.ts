@@ -67,31 +67,49 @@ test.describe('CurvedFrame', () => {
     expect(paperBg.toLowerCase()).toMatch(/fafafa/);
   });
 
-  test('curvature drag does not break interactivity or fire console errors', async ({ page }) => {
+  test('curvature drag visibly tilts content + does not break interactivity', async ({ page }) => {
     const watch = collectConsoleErrors(page);
     await page.goto('/');
     await page.getByRole('button', { name: /^Frame$/ }).click();
 
-    const wrap  = page.locator('.tab-content:visible .curved-frame');
-    const slider = page.locator('input[type="range"]').first();
-    const box    = await slider.boundingBox();
-    if (!box) throw new Error('curvature slider not found');
+    const wrap    = page.locator('.tab-content:visible .curved-frame');
+    const content = page.locator('.tab-content:visible .curved-frame-content');
+    const slider  = page.locator('input[type="range"]').first();
 
+    // Force curvature to 0 — the content layer should have no transform
+    await slider.fill('0');
+    await page.waitForTimeout(80);
+    const flatTransform = await content.evaluate(el => getComputedStyle(el).transform);
+    expect(flatTransform === 'none' || flatTransform === '' || /matrix\(1,\s*0,\s*0,\s*1/.test(flatTransform),
+      `curvature=0 should leave content untransformed, got "${flatTransform}"`).toBe(true);
+
+    // Drive curvature up to 30 — content should now have a visible
+    // transform matrix (rotateX produces matrix3d).
+    await slider.fill('30');
+    await page.waitForTimeout(80);
+    const curvedTransform = await content.evaluate(el => getComputedStyle(el).transform);
+    expect(curvedTransform,
+      `curvature=30 should produce a 3D transform, got "${curvedTransform}"`).toMatch(/matrix3d|rotateX/);
+
+    // The bezel border-radius should also have grown
+    const bezel = page.locator('.tab-content:visible .curved-frame-bezel');
+    const radius = await bezel.evaluate(el => parseFloat(getComputedStyle(el).borderRadius));
+    expect(radius,
+      `bezel border-radius should grow with curvature; got ${radius}px`).toBeGreaterThan(10);
+
+    // Now do a rapid drag — interactivity must survive
+    const box = await slider.boundingBox();
+    if (!box) throw new Error('slider gone');
     const y = box.y + box.height / 2;
     await page.mouse.move(box.x + box.width * 0.55, y);
     await page.mouse.down();
-    // Sweep through a few values rapidly
     for (const t of [0.2, 0.8, 0.3, 0.95, 0.55]) {
       const x = box.x + box.width * t;
-      // steps:1 to force a per-step input event
-      for (let i = 1; i <= 10; i++) {
-        await page.mouse.move(x, y, { steps: 1 });
-      }
+      for (let i = 1; i <= 10; i++) await page.mouse.move(x, y, { steps: 1 });
     }
     await page.mouse.up();
     await page.waitForTimeout(200);
 
-    // Slot content should still be interactive after curvature moves
     await expect(wrap).toBeVisible();
     const btn = page.locator('.frame-demo-btn');
     await btn.click();
