@@ -170,15 +170,18 @@ function setStatus(s: 'all' | 'open' | 'closed') {
 }
 
 // ── Workspace tab ─────────────────────────────────────────────────────────────
-const WS_IDS = ['trades', 'monitor', 'positions', 'scorecard', 'feed'] as const
+// Five panels, one per cathode component, so the workspace tab exercises
+// the whole library at once: CathodeGrid, CathodeCandle, CathodeLog,
+// CathodeTerminal — plus CathodeWorkspace + CathodeContainer wrapping them.
+const WS_IDS = ['trades', 'chart', 'scorecard', 'terminal', 'log'] as const
 type WsId = typeof WS_IDS[number]
 
 const WS_TITLES: Record<WsId, string> = {
   trades:    'Trades',
-  monitor:   'Fleet Monitor',
-  positions: 'Positions',
+  chart:     'Chart',
   scorecard: 'Scorecard',
-  feed:      'Signal Feed',
+  terminal:  'Terminal',
+  log:       'Log',
 }
 
 function buildWsLayout(wsW: number, wsH: number): Record<string, ContainerState> {
@@ -189,47 +192,56 @@ function buildWsLayout(wsW: number, wsH: number): Record<string, ContainerState>
   const topH   = Math.round(wsH * 0.58)
   const botY   = topH + M * 2
   const botH   = wsH - botY - M
-  const sumH   = Math.round(topH * 0.30)
-  const scH    = Math.round(topH * 0.36)
-  const gridY  = sumH + M + scH + M
-  const gridH  = topH - gridY
+  // Right column splits 45 / 25 / 30 between Chart / Scorecard / Terminal —
+  // chart needs the most vertical for its volume pane + axis chrome.
+  const chartH = Math.round(topH * 0.45)
+  const scH    = Math.round(topH * 0.25)
+  const termY  = chartH + M + scH + M
+  const termH  = topH - termY
   return {
-    trades:    { x: M,      y: M,         w: leftW,  h: topH,  visible: true, minimized: false, maximized: false, zIndex: 1 },
-    monitor:   { x: rightX, y: M,         w: rightW, h: sumH,  visible: true, minimized: false, maximized: false, zIndex: 2 },
-    scorecard: { x: rightX, y: sumH+M*2,  w: rightW, h: scH,   visible: true, minimized: false, maximized: false, zIndex: 3 },
-    positions: { x: rightX, y: gridY+M,   w: rightW, h: gridH, visible: true, minimized: false, maximized: false, zIndex: 4 },
-    feed:      { x: M,      y: botY,       w: wsW-M*2, h: botH, visible: true, minimized: false, maximized: false, zIndex: 5 },
+    trades:    { x: M,      y: M,           w: leftW,    h: topH,   visible: true, minimized: false, maximized: false, zIndex: 1 },
+    chart:     { x: rightX, y: M,           w: rightW,   h: chartH, visible: true, minimized: false, maximized: false, zIndex: 2 },
+    scorecard: { x: rightX, y: chartH+M*2,  w: rightW,   h: scH,    visible: true, minimized: false, maximized: false, zIndex: 3 },
+    terminal:  { x: rightX, y: termY+M,     w: rightW,   h: termH,  visible: true, minimized: false, maximized: false, zIndex: 4 },
+    log:       { x: M,      y: botY,        w: wsW-M*2,  h: botH,   visible: true, minimized: false, maximized: false, zIndex: 5 },
   }
 }
 
 // Compute on first load (viewport size). Reset button recomputes at click time.
 const wsLayout = buildWsLayout(window.innerWidth, window.innerHeight - 88)
 
-// ── Mock workspace content ────────────────────────────────────────────────────
-const openTrades = trades.filter(t => t.status === 'open').slice(0, 8)
-
-const STRATS = ['momentum', 'ema adx', 'trend tf', 'keltner', 'donchian']
-const SYMS   = ['XLM','ZEC','BTC','ETH','SOL','ADA','AVAX','MATIC','HIGH','DOGE']
-function mockCells(n: number) {
-  return Array.from({ length: n }, (_, i) => ({
-    sym: SYMS[i % SYMS.length],
-    open: Math.random() < 0.12,
-  }))
-}
-
-const scorecardRows = STRATEGIES.slice(0, 6).map(s => ({
+// ── Workspace panel data ──────────────────────────────────────────────────────
+const scorecardRows = STRATEGIES.slice(0, 8).map(s => ({
   name: s.replace(/_daily$/, '').replace(/_/g, ' '),
   trades: Math.floor(Math.random() * 20) + 2,
-  winPct: (40 + Math.random() * 40).toFixed(0),
-  exp: (Math.random() * 3 - 0.5).toFixed(2),
+  winPct: Number((40 + Math.random() * 40).toFixed(0)),
+  exp:    Number((Math.random() * 3 - 0.5).toFixed(2)),
 }))
 
-const feedEvents = [
-  { ts: '2m',  icon: '▲', sym: 'XLM',  strat: 'momentum breakout', pnl: null },
-  { ts: '18m', icon: '✓', sym: 'HIGH', strat: 'ema adx',            pnl: '+2.76%', pos: true },
-  { ts: '1h',  icon: '✕', sym: 'ZEC',  strat: 'hh hl trend follow', pnl: '-4.00%', pos: false },
-  { ts: '2h',  icon: '▲', sym: 'SOL',  strat: 'keltner breakout',   pnl: null },
-  { ts: '3h',  icon: '✓', sym: 'AVAX', strat: 'donchian breakout',  pnl: '+1.12%', pos: true },
+// Scorecard column defs — small, dense table for the workspace panel.
+const scorecardColDefs: ColDef[] = [
+  { field: 'name',   headerName: 'Strategy', width: 160, filter: true },
+  { field: 'trades', headerName: 'Trades',    width: 70,  cellStyle: RIGHT },
+  { field: 'winPct', headerName: 'Win%',      width: 70,
+    cellStyle: (p) => ({ ...RIGHT, color: Number(p.value) >= 50 ? '#00bc8c' : '#e74c3c' }),
+    valueFormatter: (p) => `${p.value}%` },
+  { field: 'exp',    headerName: 'Exp%',      width: 80,
+    cellStyle: (p) => ({ ...RIGHT, color: Number(p.value) >= 0 ? '#00bc8c' : '#e74c3c' }),
+    valueFormatter: (p) => `${Number(p.value) >= 0 ? '+' : ''}${p.value}%` },
+]
+
+// Signal feed → CathodeLog entries. Map each event to a level-tinted line.
+const feedLogEntries: LogEntry[] = [
+  { level: 'info',    text: '14:02:18 ▲  XLM     momentum breakout     ENTRY' },
+  { level: 'success', text: '14:18:42 ✓  HIGH    ema adx               EXIT  +2.76%' },
+  { level: 'error',   text: '15:01:55 ✕  ZEC     hh hl trend follow    EXIT  -4.00%' },
+  { level: 'info',    text: '15:34:09 ▲  SOL     keltner breakout      ENTRY' },
+  { level: 'success', text: '16:12:30 ✓  AVAX    donchian breakout     EXIT  +1.12%' },
+  { level: 'debug',   text: '16:14:01 ··  scanner pass — 142 products evaluated, 3 entries fired' },
+  { level: 'warn',    text: '16:42:18 ⚠  rate-limit cooldown 8s on coinbase market_trades' },
+  { level: 'info',    text: '17:05:11 ▲  ADA     atr trend             ENTRY' },
+  { level: 'success', text: '17:22:48 ✓  ETH     macd cross daily      EXIT  +0.83%' },
+  { level: 'debug',   text: '17:30:00 ··  heartbeat: 23 agents alive, 4 with open positions' },
 ]
 
 // ── Log tab — CathodeLog demo entries ─────────────────────────────────────────
@@ -746,72 +758,63 @@ seedLogEntries()
         </template>
       </CathodeContainer>
 
-      <!-- FLEET MONITOR — colored agent cells -->
-      <CathodeContainer id="monitor" title="Fleet Monitor" :curvature="curvature">
-        <div class="mock-monitor">
-          <div v-for="(strat, si) in STRATS" :key="si" class="mon-row">
-            <div class="mon-label">{{ strat }}</div>
-            <div class="mon-cells">
-              <div
-                v-for="(cell, ci) in mockCells(6)"
-                :key="ci"
-                :class="['mon-cell', cell.open ? 'cell-open' : 'cell-monitoring']"
-              >
-                <span v-if="cell.open" class="mon-ticker">{{ cell.sym }}</span>
-              </div>
-              <span class="mon-count">×{{ 20 + si }}</span>
-            </div>
-          </div>
-        </div>
+      <!-- CHART — CathodeCandle -->
+      <CathodeContainer id="chart" title="Chart" :curvature="curvature" canvas>
+        <template #default="{ resizeKey }">
+          <CathodeCandle
+            :key="resizeKey"
+            :candles="demoCandles"
+            :overlays="demoOverlays"
+            :markers="demoMarkers"
+            :theme="theme"
+            :curvature="curvature"
+            :scanlines="scanlines"
+            :glow="glow"
+          />
+        </template>
       </CathodeContainer>
 
-      <!-- SCORECARD -->
-      <CathodeContainer id="scorecard" title="Scorecard" :curvature="curvature">
-        <div class="mock-scorecard">
-          <div class="sc-head">
-            <span class="sc-hcell sc-wide">Strategy</span>
-            <span class="sc-hcell">Trades</span>
-            <span class="sc-hcell">Win%</span>
-            <span class="sc-hcell">Exp%</span>
-          </div>
-          <div v-for="r in scorecardRows" :key="r.name" class="sc-row">
-            <span class="sc-cell sc-wide">{{ r.name }}</span>
-            <span class="sc-cell">{{ r.trades }}</span>
-            <span class="sc-cell" :class="Number(r.winPct) >= 50 ? 'up' : 'dn'">{{ r.winPct }}%</span>
-            <span class="sc-cell" :class="Number(r.exp) >= 0 ? 'up' : 'dn'">{{ Number(r.exp) >= 0 ? '+' : '' }}{{ r.exp }}%</span>
-          </div>
-        </div>
+      <!-- SCORECARD — CathodeGrid -->
+      <CathodeContainer id="scorecard" title="Scorecard" :curvature="curvature" canvas>
+        <template #default="{ resizeKey }">
+          <CathodeGrid
+            :key="resizeKey"
+            :column-defs="scorecardColDefs"
+            :default-col-def="defaultColDef"
+            :row-data="scorecardRows"
+            :row-height="24"
+            :theme="theme"
+            :curvature="curvature"
+            :scanlines="scanlines"
+            :glow="false"
+          />
+        </template>
       </CathodeContainer>
 
-      <!-- POSITIONS -->
-      <CathodeContainer id="positions" title="Positions" :curvature="curvature">
-        <div class="mock-positions">
-          <div v-if="!openTrades.length" class="mock-empty">No open positions</div>
-          <div v-for="t in openTrades" :key="t.entry_timestamp + t.product" class="pos-row">
-            <span class="pos-sym">{{ t.product.replace(/-USD[C]?$/, '') }}</span>
-            <span class="pos-strat">{{ t.strategy.replace(/_daily$/, '').replace(/_/g, ' ') }}</span>
-            <span class="pos-pnl" :class="Number(t.pnl_pct) >= 0 ? 'up' : 'dn'">
-              {{ Number(t.pnl_pct) >= 0 ? '+' : '' }}{{ Number(t.pnl_pct).toFixed(2) }}%
-            </span>
-          </div>
-        </div>
+      <!-- TERMINAL — CathodeTerminal -->
+      <CathodeContainer id="terminal" title="Terminal" :curvature="curvature">
+        <CathodeTerminal
+          :entries="terminalEntries"
+          :theme="theme"
+          :curvature="curvature"
+          :scanlines="scanlines"
+          :glow="glow"
+          :busy="terminalBusy"
+          prompt="→ "
+          @submit="onTerminalSubmit"
+        />
       </CathodeContainer>
 
-      <!-- SIGNAL FEED -->
-      <CathodeContainer id="feed" title="Signal Feed" :curvature="curvature">
-        <div class="mock-feed">
-          <div
-            v-for="(ev, i) in feedEvents"
-            :key="i"
-            :class="['feed-ev', ev.pnl === null ? 'ev-entry' : ev.pos ? 'ev-profit' : 'ev-loss']"
-          >
-            <span class="ev-ts">{{ ev.ts }}</span>
-            <span class="ev-icon">{{ ev.icon }}</span>
-            <span class="ev-sym">{{ ev.sym }}</span>
-            <span class="ev-strat">{{ ev.strat }}</span>
-            <span v-if="ev.pnl" class="ev-pnl" :class="ev.pos ? 'up' : 'dn'">{{ ev.pnl }}</span>
-          </div>
-        </div>
+      <!-- LOG — CathodeLog (signal feed as level-tinted lines) -->
+      <CathodeContainer id="log" title="Log" :curvature="curvature">
+        <CathodeLog
+          :entries="feedLogEntries"
+          :theme="theme"
+          :curvature="curvature"
+          :scanlines="scanlines"
+          :glow="glow"
+          :show-timestamps="false"
+        />
       </CathodeContainer>
     </CathodeWorkspace>
 
@@ -1034,105 +1037,9 @@ select, input[type="range"] {
    on .tab-content > * picks up --cc-accent so the curvature reads
    without re-colouring the bezel itself. */
 
-/* ── Mock container content ─────────────────────────────────────── */
-.mock-monitor {
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  height: 100%;
-  background: var(--cc-surface);
-  overflow: hidden;
-}
-.mon-row   { display: flex; align-items: center; gap: 8px; }
-.mon-label {
-  width: 90px; flex-shrink: 0;
-  font-size: 8px; font-family: monospace; letter-spacing: 0.04em;
-  color: var(--cc-tx3); text-align: right; text-transform: uppercase;
-  padding-right: 6px; border-right: 2px solid var(--cc-border-2);
-}
-.mon-cells { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
-.mon-cell {
-  width: 20px; height: 20px; border-radius: 2px;
-  display: flex; align-items: center; justify-content: center;
-}
-.cell-monitoring { background: #1a2f4a; border: 1px solid #2e4f72; }
-.cell-open {
-  background: #0d3d1f; border: 1px solid #00cc55;
-  box-shadow: 0 0 6px rgba(0,210,90,0.5);
-  animation: pulse-open 1.6s ease-in-out infinite;
-}
-.mon-ticker { font-size: 5px; font-family: monospace; font-weight: bold; color: rgba(255,255,255,0.7); }
-.mon-count  { font-size: 9px; font-family: monospace; color: var(--cc-tx3); }
-
-@keyframes pulse-open {
-  0%, 100% { box-shadow: 0 0 4px rgba(0,210,90,0.4); }
-  50%       { box-shadow: 0 0 10px rgba(0,240,110,0.8); }
-}
-
-.mock-scorecard {
-  height: 100%; background: var(--cc-surface); overflow: hidden;
-  display: flex; flex-direction: column;
-}
-.sc-head {
-  display: flex; background: var(--cc-header);
-  border-bottom: 1px solid var(--cc-border);
-  height: 26px; flex-shrink: 0;
-}
-.sc-hcell {
-  font-size: 8px; font-family: monospace; font-weight: bold;
-  letter-spacing: 0.06em; color: var(--cc-tx3); text-transform: uppercase;
-  padding: 0 8px; display: flex; align-items: center;
-  border-right: 1px solid var(--cc-border); min-width: 55px;
-}
-.sc-hcell.sc-wide { min-width: 160px; flex: 1; }
-.sc-row {
-  display: flex; border-bottom: 1px solid var(--cc-border);
-  height: 24px; cursor: pointer;
-}
-.sc-row:hover { background: rgba(255,255,255,0.025); }
-.sc-cell {
-  font-size: 10px; font-family: monospace; color: var(--cc-tx2);
-  padding: 0 8px; display: flex; align-items: center;
-  border-right: 1px solid var(--cc-border); min-width: 55px;
-}
-.sc-cell.sc-wide { min-width: 160px; flex: 1; color: var(--cc-tx1); }
-.up { color: #00bc8c; } .dn { color: #e74c3c; }
-
-.mock-positions {
-  height: 100%; background: var(--cc-surface); overflow-y: auto;
-  padding: 6px 10px; display: flex; flex-direction: column; gap: 3px;
-}
-.mock-empty { font-size: 10px; font-family: monospace; color: var(--cc-tx3); padding: 8px; }
-.pos-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 3px 6px; border-radius: 2px;
-  border: 1px solid var(--cc-border);
-  background: var(--cc-surface);
-  font-family: monospace; font-size: 10px;
-}
-.pos-sym   { font-weight: bold; color: var(--cc-tx1); min-width: 36px; }
-.pos-strat { color: var(--cc-tx3); font-size: 9px; flex: 1; }
-.pos-pnl   { font-weight: bold; font-size: 10px; }
-
-.mock-feed {
-  height: 100%; background: var(--cc-surface); overflow-y: auto;
-  padding: 4px 0; display: flex; flex-direction: column;
-}
-.feed-ev {
-  display: flex; align-items: center; gap: 6px;
-  padding: 3px 10px; font-family: monospace; font-size: 10px;
-  border-left: 2px solid transparent;
-}
-.feed-ev:hover { background: rgba(255,255,255,0.03); }
-.ev-entry  { border-color: var(--cc-accent-text); }
-.ev-profit { border-color: #00bc8c; }
-.ev-loss   { border-color: #e74c3c; }
-.ev-ts     { font-size: 9px; color: var(--cc-tx3); min-width: 24px; }
-.ev-icon   { font-size: 10px; color: var(--cc-tx2); }
-.ev-sym    { font-weight: bold; color: var(--cc-tx1); min-width: 36px; }
-.ev-strat  { color: var(--cc-tx3); font-size: 9px; flex: 1; }
-.ev-pnl    { font-weight: bold; }
+/* (Removed: mock-monitor / mock-scorecard / mock-positions / mock-feed
+    styles. The workspace now uses real cathode components — every panel
+    paints its own canvas, so per-panel mock CSS is gone.) */
 
 /* scrollbar */
 ::-webkit-scrollbar { width: 5px; height: 5px; }

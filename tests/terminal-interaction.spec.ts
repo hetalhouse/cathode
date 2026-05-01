@@ -39,7 +39,9 @@ test.describe('CathodeTerminal', () => {
 
     // Hidden input is in the DOM (it's `pointer-events: none`, which the
     // is-visible heuristic treats as still visible — confirm by attached state)
-    const input = page.getByTestId('ct-input');
+    // Scope to the visible terminal-tab — the workspace tab also mounts a
+    // CathodeTerminal, so an unscoped `getByTestId('ct-input')` matches both.
+    const input = page.locator('.tab-content:visible').getByTestId('ct-input');
     await expect(input).toBeAttached();
 
     expect(watch.entries).toEqual([]);
@@ -82,7 +84,9 @@ test.describe('CathodeTerminal', () => {
     const baseline = (await canvas.screenshot()).length;
 
     // Type + submit
-    const input = page.getByTestId('ct-input');
+    // Scope to the visible terminal-tab — the workspace tab also mounts a
+    // CathodeTerminal, so an unscoped `getByTestId('ct-input')` matches both.
+    const input = page.locator('.tab-content:visible').getByTestId('ct-input');
     await input.fill('echo regression-check');
     await input.press('Enter');
 
@@ -109,7 +113,9 @@ test.describe('CathodeTerminal', () => {
     await page.locator('.tab-content:visible canvas').first().waitFor({ state: 'visible' });
     await page.waitForTimeout(300);
 
-    const input = page.getByTestId('ct-input');
+    // Scope to the visible terminal-tab — the workspace tab also mounts a
+    // CathodeTerminal, so an unscoped `getByTestId('ct-input')` matches both.
+    const input = page.locator('.tab-content:visible').getByTestId('ct-input');
 
     // Submit twice so history has two entries
     await input.fill('first');
