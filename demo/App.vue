@@ -865,13 +865,17 @@ select, input[type="range"] {
 }
 
 /* Inner screen surface — the actual area cathode renders into.
-   Holds the vignette overlay and clips the canvas to its rounded edge. */
+   Holds the vignette overlay and clips the canvas to its rounded edge.
+   Background tracks --cc-base so cathode's transparent-bg themes
+   (none, paper) render against the right surface — paper mode needs a
+   LIGHT screen behind the dark bezel; dark themes need a dark screen. */
 .tab-content > * {
   position: relative;
   width:  100%;
   height: 100%;
   border-radius: 6px;
   overflow: hidden;
+  background: var(--cc-base);
   /* Layered insets:
      - outer hairline ring: dark frame around the screen
      - phosphor halation: faint accent-coloured glow bleeding from the
@@ -886,6 +890,28 @@ select, input[type="range"] {
     inset 0 0 0 2px color-mix(in srgb, var(--cc-accent) 18%, transparent),
     inset 0 0 18px color-mix(in srgb, var(--cc-accent) 10%, transparent),
     inset 0 0 26px rgba(0, 0, 0, 0.55);
+}
+
+/* Paper theme — light screen surface, so the inner shadows need to
+   ease up; otherwise the corner vignette crushes the light bg into
+   near-black. */
+.demo-shell.cathode-light .tab-content > * {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 2px color-mix(in srgb, var(--cc-accent) 22%, transparent),
+    inset 0 0 18px color-mix(in srgb, var(--cc-accent) 12%, transparent),
+    inset 0 0 26px rgba(0, 0, 0, 0.10);
+}
+.demo-shell.cathode-light .tab-content::after {
+  /* Soft paper-grade vignette — keeps a hint of corner darkening for
+     curvature without dimming the readable area. */
+  background:
+    radial-gradient(
+      ellipse at center,
+      transparent 55%,
+      rgba(0, 0, 0, 0.05) 78%,
+      rgba(0, 0, 0, 0.12) 100%
+    );
 }
 
 /* Corner vignette — radial gradient layered over the active screen.
