@@ -1,24 +1,23 @@
 <script setup lang="ts">
 /**
- * CathodeTerminal — CathodeLog scrollback + a command-prompt input row.
+ * CathodeTerminal — CathodeLog scrollback with the prompt + draft rendered
+ * INLINE as the last visible entry, like a real terminal. The prompt walks
+ * down with the output; sparse content keeps the prompt right under the
+ * last entry instead of pinned to the bottom of the panel.
  *
- * Pure UI component. The consumer owns the command-handling: when the user
- * submits, this emits `submit` with the entered string; the consumer is
- * responsible for echoing the command into `entries` (or not) and for
- * pushing the response back as a new entry.
+ * Implementation: a hidden HTML input captures keystrokes; the visible
+ * "input" is the last "phantom" entry passed to the inner CathodeLog, so
+ * the prompt + draft + cursor get the same barrel / scanline / glow
+ * treatment as the rest of the scrollback. Click anywhere on the wrap
+ * focuses the hidden input.
  *
- * History navigation: ↑ / ↓ cycle through prior submitted commands. The
- * history is internal (capped at `historyLimit`) — it is NOT derived from
- * `entries`, since the consumer might choose not to echo every submit.
- *
- * Designed as a sibling to CathodeLog, not a fork — the scrollback IS a
- * `<CathodeLog>` instance that handles all the canvas / barrel / wrap
- * rendering. We just stack an input row underneath.
+ * The consumer still owns command handling: when the user presses Enter,
+ * `submit` fires with the entered string. The consumer is responsible for
+ * pushing the user line + response back into `entries` (or not).
  */
-import { ref, computed, onMounted } from 'vue'
-import type { CSSProperties } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import CathodeLog from './CathodeLog.vue'
-import { LOG_THEME_COLORS, type LogEntry } from './CanvasLog'
+import { type LogEntry } from './CanvasLog'
 import './cathode.css'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -28,27 +27,24 @@ const props = withDefaults(defineProps<{
   entries:        LogEntry[]
   /** 'none' inherits parent CSS vars; built-ins: phosphor | amber | paper. */
   theme?:         'none' | 'phosphor' | 'amber' | 'paper'
-  /** 0–45 barrel-distortion strength (forwarded to CathodeLog). */
   curvature?:     number
   scanlines?:     boolean
   glow?:          boolean
-  /** Show/hide the timestamp column on scrollback entries. */
+  /** Show/hide the timestamp column on scrollback entries (the prompt row
+   *  never carries a timestamp regardless). */
   showTimestamps?: boolean
   formatTs?:      (ts: number | string) => string
   wordWrap?:      boolean
-  /** Stick to bottom on new entries unless the user has scrolled up. */
   autoscroll?:    boolean
-  /** Ring-buffer cap on rendered entries (forwarded to CathodeLog). 0 = no cap. */
   maxLines?:      number
 
   // Terminal-specific
   /** Prefix shown before the input (e.g. "→ ", "$ ", "> "). */
   prompt?:        string
-  /** Placeholder text in the empty input. */
-  placeholder?:   string
   /** When true, the input is read-only and submit is disabled. */
   disabled?:      boolean
-  /** When true, render a spinner/dim state — useful while awaiting a response. */
+  /** When true, the cursor stops blinking and shows a steady block —
+   *  useful while awaiting a response. */
   busy?:          boolean
   /** Max number of submitted commands kept for ↑/↓ history. */
   historyLimit?:  number
@@ -62,33 +58,26 @@ const props = withDefaults(defineProps<{
   autoscroll:     true,
   maxLines:       0,
   prompt:         '→ ',
-  placeholder:    'type a command…',
   disabled:       false,
   busy:           false,
   historyLimit:   100,
 })
 
 const emit = defineEmits<{
-  /** Fired when the user presses Enter. The consumer decides what to do
-   *  with the command (echo it, send it to a backend, etc.). */
   submit: [command: string]
 }>()
 
 // ── Input state ──────────────────────────────────────────────────────────────
 
-const inputEl  = ref<HTMLInputElement | null>(null)
-const draft    = ref('')
+const wrapEl  = ref<HTMLDivElement | null>(null)
+const inputEl = ref<HTMLInputElement | null>(null)
+const draft   = ref('')
 
-// History — simple ring buffer of submitted commands. `historyIdx` is -1
-// when not browsing; ≥0 when the user has pressed ↑.
 const history     = ref<string[]>([])
 const historyIdx  = ref(-1)
-/** Snapshot of the in-progress draft when the user starts browsing history,
- *  so ↓ past the most recent entry restores what they were typing. */
 let draftSnapshot = ''
 
 function pushHistory(cmd: string) {
-  // Skip empties + dedupe consecutive
   if (!cmd.trim()) return
   if (history.value.length && history.value[history.value.length - 1] === cmd) return
   history.value.push(cmd)
@@ -128,7 +117,6 @@ function onKey(e: KeyboardEvent) {
       historyIdx.value++
       draft.value = history.value[historyIdx.value]
     } else {
-      // Past the last history entry — restore the in-progress draft
       historyIdx.value = -1
       draft.value      = draftSnapshot
       draftSnapshot    = ''
@@ -137,24 +125,44 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-// ── Theme bridge: borrow the log palette so the input matches the scrollback ──
+// ── Cursor blink — toggled via interval, included in the phantom entry ──────
 
-const themeC = computed(() => LOG_THEME_COLORS[props.theme] ?? LOG_THEME_COLORS['none'])
+const cursorVisible = ref(true)
+let blinkTimer: ReturnType<typeof setInterval> | null = null
 
-const inputStyle = computed<CSSProperties>(() => ({
-  color:        themeC.value.text,
-  caretColor:   themeC.value.text,
-  // Subtle bottom border in the theme's accent (gridline) colour
-  borderColor:  themeC.value.border,
-  background:   'transparent',
-}))
+function startBlink() {
+  if (blinkTimer) return
+  blinkTimer = setInterval(() => { cursorVisible.value = !cursorVisible.value }, 530)
+}
+function stopBlink() {
+  if (blinkTimer) { clearInterval(blinkTimer); blinkTimer = null }
+  cursorVisible.value = true   // ensure block is rendered while idle
+}
 
-const promptStyle = computed<CSSProperties>(() => ({
-  color: themeC.value.text,
-  opacity: props.disabled || props.busy ? 0.5 : 1,
-}))
+// ── Phantom entry — the prompt + draft + cursor as the last "log entry" ─────
 
-// ── Public API ────────────────────────────────────────────────────────────────
+const promptEntry = computed<LogEntry>(() => {
+  // Steady block while busy (no blink) so the spinner-like state is obvious;
+  // empty space while disabled (no editable input).
+  let cursor: string
+  if (props.disabled)      cursor = ' '
+  else if (props.busy)     cursor = '▮'
+  else                     cursor = cursorVisible.value ? '▮' : ' '
+  return { level: 'info', text: `${props.prompt}${draft.value}${cursor}` }
+})
+
+const displayEntries = computed<LogEntry[]>(() =>
+  [...props.entries, promptEntry.value],
+)
+
+// ── Click-anywhere focuses the hidden input ─────────────────────────────────
+
+function onWrapClick() {
+  if (props.disabled) return
+  inputEl.value?.focus()
+}
+
+// ── Public API ──────────────────────────────────────────────────────────────
 
 function focus() {
   inputEl.value?.focus()
@@ -163,49 +171,52 @@ function focus() {
 defineExpose({ focus })
 
 onMounted(() => {
-  // Auto-focus on mount when not disabled — feels like a real terminal
+  startBlink()
   if (!props.disabled) requestAnimationFrame(() => inputEl.value?.focus())
+})
+
+onUnmounted(() => {
+  stopBlink()
 })
 </script>
 
 <template>
-  <div class="cathode-terminal-wrap">
-    <!-- Scrollback fills remaining space -->
-    <div class="cathode-terminal-scrollback">
-      <CathodeLog
-        :entries="entries"
-        :theme="theme"
-        :curvature="curvature"
-        :scanlines="scanlines"
-        :glow="glow"
-        :show-timestamps="showTimestamps"
-        :format-ts="formatTs"
-        :word-wrap="wordWrap"
-        :autoscroll="autoscroll"
-        :max-lines="maxLines"
-      />
-    </div>
+  <div
+    ref="wrapEl"
+    class="cathode-terminal-wrap"
+    @click="onWrapClick"
+  >
+    <CathodeLog
+      :entries="displayEntries"
+      :theme="theme"
+      :curvature="curvature"
+      :scanlines="scanlines"
+      :glow="glow"
+      :show-timestamps="showTimestamps"
+      :format-ts="formatTs"
+      :word-wrap="wordWrap"
+      :autoscroll="autoscroll"
+      :max-lines="maxLines"
+    />
 
-    <!-- Input row pinned to bottom -->
-    <div class="cathode-terminal-inputrow" :style="{ borderTopColor: themeC.border }">
-      <span class="cathode-terminal-prompt" :style="promptStyle" data-testid="ct-prompt">{{ prompt }}</span>
-      <input
-        ref="inputEl"
-        v-model="draft"
-        :placeholder="busy ? '…' : placeholder"
-        :disabled="disabled || busy"
-        :style="inputStyle"
-        class="cathode-terminal-input"
-        spellcheck="false"
-        autocomplete="off"
-        autocorrect="off"
-        autocapitalize="off"
-        type="text"
-        data-testid="ct-input"
-        @keydown="onKey"
-      />
-      <span v-if="busy" class="cathode-terminal-spinner" :style="{ color: themeC.text }">▮</span>
-    </div>
+    <!-- Hidden input — captures keystrokes, never shown. The visible
+         "input" is the last entry on the canvas above. We size it so it
+         still receives focus reliably (zero-size inputs are flaky in
+         some browsers) but render it transparent and out of the layout
+         flow's hit region. -->
+    <input
+      ref="inputEl"
+      v-model="draft"
+      :disabled="disabled || busy"
+      class="cathode-terminal-input-hidden"
+      spellcheck="false"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      type="text"
+      data-testid="ct-input"
+      @keydown="onKey"
+    />
   </div>
 </template>
 
@@ -217,62 +228,29 @@ onMounted(() => {
   width:  100%;
   height: 100%;
   overflow: hidden;
+  cursor: text;   /* hint: clicking anywhere will focus the input */
 }
 
-.cathode-terminal-scrollback {
-  flex: 1;
-  min-height: 0;   /* lets the inner CathodeLog actually shrink */
-  display: flex;
-  flex-direction: column;
-}
-
-.cathode-terminal-inputrow {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-top: 1px solid;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-  flex-shrink: 0;
-  /* Give a touch of vertical breathing room without overpowering the scrollback */
-  min-height: 26px;
-}
-
-.cathode-terminal-prompt {
-  flex-shrink: 0;
-  white-space: pre;
-  user-select: none;
-}
-
-.cathode-terminal-input {
-  flex: 1;
-  background: transparent;
-  border: 0;
-  outline: none;
-  font: inherit;
-  color: inherit;
+/* Hidden input — out of layout, transparent, but still focusable. We avoid
+   `display:none`/`visibility:hidden` since both prevent focus + caret. */
+.cathode-terminal-input-hidden {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width:  1px;
+  height: 1px;
   padding: 0;
-  /* keep the input visually flush with the prompt; no platform default styling */
-  appearance: none;
-}
-
-.cathode-terminal-input::placeholder {
-  opacity: 0.4;
-}
-
-.cathode-terminal-input:disabled {
-  opacity: 0.5;
-  cursor: progress;
-}
-
-.cathode-terminal-spinner {
-  flex-shrink: 0;
-  animation: ct-blink 1.1s steps(2, end) infinite;
-}
-
-@keyframes ct-blink {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0; }
+  margin:  0;
+  border:  0;
+  outline: 0;
+  background: transparent;
+  color:      transparent;
+  caret-color: transparent;
+  /* Behind the canvas — clicks on the wrap go to onWrapClick which focuses
+     this. Keystrokes still land here once focused. */
+  z-index: 0;
+  /* iOS/Safari sometimes scroll into view aggressively on focus — pin it
+     so the panel can't get nudged. */
+  pointer-events: none;
 }
 </style>

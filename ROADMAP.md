@@ -55,19 +55,31 @@ the log component stays unchanged.
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | `CathodeTerminal.vue` — composes `<CathodeLog>` for scrollback, adds an input row pinned to the bottom. Theme-aware (none/phosphor/amber/paper); palette borrowed from `LOG_THEME_COLORS`. | ✓ done |
-| 2 | History navigation — ↑/↓ cycle through prior submitted commands; ↓ past the most recent restores the in-progress draft. Internal ring buffer, `historyLimit` prop (default 100). | ✓ done |
-| 3 | Public API — `submit` event with the entered string (consumer owns echo + response routing); `busy` prop dims the input + shows a blinking caret while a backend call is in flight; `defineExpose({ focus })`. | ✓ done |
-| 4 | Demo Terminal tab + tiny echo handler (help / echo / time / fail / clear) so the round-trip works without a backend. | ✓ done |
-| 5 | Playwright suite — render smoke, submit-roundtrip, history navigation. 3 new tests, 27 total. | ✓ done |
-| 6 | Index exports for component (no extra types — reuses `LogEntry`). | ✓ done |
+| 1 | `CathodeTerminal.vue` — composes `<CathodeLog>` for the scrollback, renders the prompt + draft + cursor INLINE as the last entry on the same canvas (no docked input row). Theme-aware (none/phosphor/amber/paper); palette borrowed from `LOG_THEME_COLORS`. | ✓ done |
+| 2 | Hidden HTML `<input>` captures keystrokes; click-anywhere on the wrap focuses it. Click-anywhere works because the wrap is a single positioned region (no DOM-input row competing for hit area). | ✓ done |
+| 3 | Cursor blink — `cursorVisible` ref toggled every 530ms; the phantom prompt entry includes `▮` or a space accordingly. Steady block while `busy=true`; absent while `disabled=true`. | ✓ done |
+| 4 | History navigation — ↑/↓ cycle through prior submitted commands; ↓ past the most recent restores the in-progress draft. Internal ring buffer, `historyLimit` prop (default 100). | ✓ done |
+| 5 | Public API — `submit` event with the entered string (consumer owns echo + response routing); `defineExpose({ focus })`. | ✓ done |
+| 6 | Demo Terminal tab + tiny echo handler (help / echo / time / fail / clear) so the round-trip works without a backend. | ✓ done |
+| 7 | Playwright suite — render smoke, cursor-blink byte-delta sampling, submit-roundtrip, history navigation. 4 new tests, 28 total. | ✓ done |
+| 8 | Index exports for component (no extra types — reuses `LogEntry`). | ✓ done |
 
 > **Why a sibling, not a CathodeLog flag?** `CathodeLog` is read-only by
-> contract — it has no DOM children, just a canvas. Adding an input row
-> would have meant a non-canvas child + flex layout + a focus model
-> alien to a "passive viewer". A separate component keeps each one
-> single-purpose; consumers that don't need the prompt aren't forced
-> to opt out of it.
+> contract — adding terminal-input concerns to it would force every
+> consumer to opt out. A separate component keeps each one
+> single-purpose.
+
+> **Why inline-render the prompt instead of a docked input row?** The
+> first cut put the prompt + input in a flex row pinned to the bottom of
+> the panel — chat-app style. User feedback (2026-05-01): real terminals
+> render the prompt as part of the output stream and walk the cursor
+> down with new lines; with a docked input the empty space between
+> sparse content and the bottom-pinned prompt felt wrong. Reworked so
+> the prompt + draft + cursor are appended as a phantom last entry to
+> the inner CathodeLog's `entries` array. The prompt naturally follows
+> the bottom of content, gets the same barrel / scanline / glow
+> treatment as everything else, and the panel below the prompt is
+> blank empty space — exactly like xterm or iTerm.
 
 The next-step "wire to a real backend" work (Claude chat, sk-* command
 execution) is deliberately scoped to consumer repos — this component
