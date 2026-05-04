@@ -140,7 +140,7 @@ const gridApi    = ref<GridApi | null>(null)
 const curvature  = ref(25)
 const scanlines  = ref(true)
 const magnify    = ref(false)
-const glow       = ref(true)
+const glow       = ref(false)
 const quickText  = ref('')
 const statusFilt = ref<'all' | 'open' | 'closed'>('all')
 const gridKey    = ref(0)
@@ -271,9 +271,32 @@ const logEntries = ref<LogEntry[]>([])
 
 // ── Terminal tab — echo handler so the demo has a working roundtrip without
 //    needing any real backend. Consumers wire `submit` to a real handler. ────
+// Help screen — referenced both as the initial scrollback (so the terminal
+// opens already showing the available commands, no need to type 'help')
+// and as the body of the help command itself.
+const HELP_LINES: LogEntry[] = [
+  { level: 'info',    text: 'commands:' },
+  { level: 'success', text: '  help                 — this list' },
+  { level: 'success', text: '  echo <text>          — print text back' },
+  { level: 'success', text: '  time                 — ISO-8601 timestamp' },
+  { level: 'success', text: '  date                 — human-readable date' },
+  { level: 'success', text: '  whoami               — current user (faked)' },
+  { level: 'success', text: '  pwd                  — current directory (faked)' },
+  { level: 'success', text: '  uname                — fake system info' },
+  { level: 'success', text: '  ls                   — fake file listing' },
+  { level: 'success', text: '  cat <name>           — fake file contents' },
+  { level: 'success', text: '  ping <host>          — simulated latency' },
+  { level: 'success', text: '  colors               — show every log-level colour' },
+  { level: 'success', text: '  cowsay <text>        — ASCII cow' },
+  { level: 'success', text: '  joke                 — deterministic groaner' },
+  { level: 'success', text: '  motd                 — message of the day' },
+  { level: 'success', text: '  fail                 — emit a fake error' },
+  { level: 'success', text: '  clear                — wipe scrollback' },
+]
+
 const terminalEntries = ref<LogEntry[]>([
-  { level: 'info',    text: 'CathodeTerminal demo' },
-  { level: 'debug',   text: "type 'help' to list available commands" },
+  { level: 'info', text: 'CathodeTerminal demo' },
+  ...HELP_LINES,
 ])
 const terminalBusy = ref(false)
 
@@ -283,25 +306,7 @@ const terminalBusy = ref(false)
 type Reply = LogEntry | LogEntry[] | null    // null = handled inline (e.g. `clear`)
 
 const COMMANDS: Record<string, (args: string) => Reply> = {
-  help: () => [
-    { level: 'info',    text: 'commands:' },
-    { level: 'success', text: '  help                 — this list' },
-    { level: 'success', text: '  echo <text>          — print text back' },
-    { level: 'success', text: '  time                 — ISO-8601 timestamp' },
-    { level: 'success', text: '  date                 — human-readable date' },
-    { level: 'success', text: '  whoami               — current user (faked)' },
-    { level: 'success', text: '  pwd                  — current directory (faked)' },
-    { level: 'success', text: '  uname                — fake system info' },
-    { level: 'success', text: '  ls                   — fake file listing' },
-    { level: 'success', text: '  cat <name>           — fake file contents' },
-    { level: 'success', text: '  ping <host>          — simulated latency' },
-    { level: 'success', text: '  colors               — show every log-level colour' },
-    { level: 'success', text: '  cowsay <text>        — ASCII cow' },
-    { level: 'success', text: '  joke                 — deterministic groaner' },
-    { level: 'success', text: '  motd                 — message of the day' },
-    { level: 'success', text: '  fail                 — emit a fake error' },
-    { level: 'success', text: '  clear                — wipe scrollback' },
-  ],
+  help: () => HELP_LINES,
 
   echo: (args) => ({ level: 'info', text: args || '' }),
 
