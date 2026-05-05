@@ -6,6 +6,7 @@ import CathodeCandle     from '../src/CathodeCandle.vue'
 import CathodeTerminal   from '../src/CathodeTerminal.vue'
 import CathodeWorkspace from '../src/CathodeWorkspace.vue'
 import CathodeContainer from '../src/CathodeContainer.vue'
+import CathodeLoader    from '../src/CathodeLoader.vue'
 import { buildDefaultLayout } from '../src/useCathodeLayout'
 import type { ColDef, GridApi } from '../src/types'
 import type { ContainerState } from '../src/useCathodeLayout'
@@ -140,6 +141,10 @@ const gridApi    = ref<GridApi | null>(null)
 const curvature  = ref(25)
 const scanlines  = ref(true)
 const magnify    = ref(false)
+// Force every panel into the CathodeLoader state — lets visitors see the
+// boot/loading placeholder applied across the whole UI on demand. Real
+// consumers gate the loader on actual readiness; this just exposes it.
+const showLoaders = ref(false)
 const glow       = ref(false)
 const quickText  = ref('')
 const statusFilt = ref<'all' | 'open' | 'closed'>('all')
@@ -665,6 +670,10 @@ seedLogEntries()
         <input type="checkbox" v-model="magnify" data-testid="cf-magnify" />
         Magnify
       </label>
+      <label>
+        <input type="checkbox" v-model="showLoaders" data-testid="cf-show-loaders" />
+        Show loaders
+      </label>
       <label v-if="activeTab === 'candle'">
         <input type="checkbox" v-model="showIndicators" data-testid="cf-show-indicators" />
         Indicators
@@ -693,7 +702,13 @@ seedLogEntries()
 
     <!-- ── Grid tab ──────────────────────────────────────────────── -->
     <div v-show="activeTab === 'grid'" class="tab-content">
+      <CathodeLoader
+        v-if="showLoaders"
+        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+        label="LOADING TRADES"
+      />
       <CathodeGrid
+        v-else
         :key="gridKey"
         :column-defs="columnDefs"
         :default-col-def="defaultColDef"
@@ -711,7 +726,13 @@ seedLogEntries()
 
     <!-- ── Log tab ───────────────────────────────────────────────── -->
     <div v-show="activeTab === 'log'" class="tab-content">
+      <CathodeLoader
+        v-if="showLoaders"
+        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+        label="OPENING LOG"
+      />
       <CathodeLog
+        v-else
         :entries="logEntries"
         :theme="theme"
         :curvature="curvature"
@@ -724,7 +745,13 @@ seedLogEntries()
 
     <!-- ── Candle tab — OHLCV candlestick chart with the barrel pipeline ─── -->
     <div v-show="activeTab === 'candle'" class="tab-content">
+      <CathodeLoader
+        v-if="showLoaders"
+        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+        label="STREAMING CANDLES"
+      />
       <CathodeCandle
+        v-else
         :key="`cf-${flat}`"
         :candles="demoCandles"
         :overlays="showIndicators ? demoOverlays : []"
@@ -741,7 +768,13 @@ seedLogEntries()
 
     <!-- ── Terminal tab — log scrollback + command-prompt input row ─── -->
     <div v-show="activeTab === 'terminal'" class="tab-content">
+      <CathodeLoader
+        v-if="showLoaders"
+        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+        label="ATTACHING TTY"
+      />
       <CathodeTerminal
+        v-else
         :entries="terminalEntries"
         :theme="theme"
         :curvature="curvature"
@@ -764,7 +797,13 @@ seedLogEntries()
       <!-- TRADES — CathodeGrid inside a container -->
       <CathodeContainer id="trades" title="Trades" :curvature="curvature" canvas>
         <template #default="{ resizeKey }">
+          <CathodeLoader
+            v-if="showLoaders"
+            :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+            label="LOADING TRADES"
+          />
           <CathodeGrid
+            v-else
             :key="resizeKey"
             :column-defs="columnDefs"
             :default-col-def="defaultColDef"
@@ -784,7 +823,13 @@ seedLogEntries()
       <!-- CHART — CathodeCandle -->
       <CathodeContainer id="chart" title="Chart" :curvature="curvature" canvas>
         <template #default="{ resizeKey }">
+          <CathodeLoader
+            v-if="showLoaders"
+            :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+            label="STREAMING CANDLES"
+          />
           <CathodeCandle
+            v-else
             :key="resizeKey"
             :candles="demoCandles"
             :overlays="demoOverlays"
@@ -800,7 +845,13 @@ seedLogEntries()
 
       <!-- LOG — CathodeLog (same dataset as the standalone Log tab) -->
       <CathodeContainer id="log" title="Log" :curvature="curvature" canvas>
+        <CathodeLoader
+          v-if="showLoaders"
+          :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+          label="OPENING LOG"
+        />
         <CathodeLog
+          v-else
           :entries="logEntries"
           :theme="theme"
           :curvature="curvature"
@@ -813,7 +864,13 @@ seedLogEntries()
 
       <!-- TERMINAL — CathodeTerminal -->
       <CathodeContainer id="terminal" title="Terminal" :curvature="curvature" canvas>
+        <CathodeLoader
+          v-if="showLoaders"
+          :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+          label="ATTACHING TTY"
+        />
         <CathodeTerminal
+          v-else
           :entries="terminalEntries"
           :theme="theme"
           :curvature="curvature"

@@ -4,6 +4,7 @@ export { default as CathodeTerminal } from './CathodeTerminal.vue';
 export { default as CathodeCandle } from './CathodeCandle.vue';
 export { default as CathodeWorkspace } from './CathodeWorkspace.vue';
 export { default as CathodeContainer } from './CathodeContainer.vue';
+export { default as CathodeLoader } from './CathodeLoader.vue';
 export { useCathodeLayout, buildDefaultLayout } from './useCathodeLayout';
 export type { ContainerState } from './useCathodeLayout';
 export type { ColDef, ColState, GridApi, GridReadyEvent, RowClickedEvent, ResolvedCol, ValueGetterParams, ValueFormatterParams, CellStyleParams, CellRendererParams, } from './types';
