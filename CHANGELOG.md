@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.6] — 2026-06-02 (README — drop link to private workspace repo)
+
+### Fixed
+
+- **README link to `bradyhouse/sigma-swing-agent` removed.** That repo is the workspace/sandbox (operational trading data) and is intentionally private — the link 404'd for any npm-page reader. Rephrased to keep the "in active production use" claim without naming or linking the specific consumer.
+
+No code changes. README-only release.
+
+---
+
 ## [0.1.5] — 2026-05-31
 
 ### Fixed

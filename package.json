@@ -1,6 +1,6 @@
 {
   "name": "@stratchai/cathode",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "A retro CRT curved-screen datagrid for the web",
   "license": "MIT",
   "author": "stratchai",

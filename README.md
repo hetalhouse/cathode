@@ -102,7 +102,7 @@ function onGridReady(e: { api: GridApi }) {
 
 ## Status
 
-**v0.1.x — production-ready for small-to-mid datasets.** Cathode is in active use in [sigma-swing-agent](https://github.com/bradyhouse/sigma-swing-agent)'s dashboard rendering live trading data.
+**v0.1.x — production-ready for small-to-mid datasets.** Cathode is in active use rendering live trading data in a production dashboard.
 
 | Works well for | Choose something else for |
 |----------------|---------------------------|
