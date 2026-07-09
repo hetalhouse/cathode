@@ -11,7 +11,7 @@
 ![cathode workspace — the curvature slider sweeping the workspace flat→fishbowl, then the shader magnifier lens chasing the cursor across the curved grid](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/demo.gif)
 
 **[▶ Try it live](https://bradyhouse.github.io/cathode/)** — the curve slider is the fun part.
-**[🎬 Watch the 28-second tour (mp4)](https://github.com/hetalhouse/cathode/raw/main/docs/demo.mp4)** — workspace → magnifier lens → three.js candles → themes.
+**[🎬 Watch the 26-second tour (mp4)](https://github.com/hetalhouse/cathode/raw/main/docs/demo.mp4)** — workspace → magnifier lens → three.js candles → themes.
 
 <sup>Stills reproduce with `npm run capture:hero` (see `tools/capture-hero.mjs`); the workspace hero lives at [`docs/hero.png`](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/hero.png).</sup>
 
