@@ -47,7 +47,8 @@
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "test:debug": "PWDEBUG=1 playwright test",
-    "capture:hero": "bash tools/capture-hero.sh"
+    "capture:hero": "bash tools/capture-hero.sh",
+    "build:demo:pages": "vite build --base=/cathode/"
   },
   "peerDependencies": {
     "three": "^0.170.0",
