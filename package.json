@@ -1,6 +1,6 @@
 {
   "name": "@hetalhouse/cathode",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A retro CRT curved-screen datagrid for the web",
   "license": "MIT",
   "author": "Brady House <bradyhouse@gmail.com>",
