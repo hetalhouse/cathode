@@ -8,9 +8,13 @@
 [![bundle size](https://img.shields.io/bundlephobia/minzip/@hetalhouse/cathode.svg)](https://bundlephobia.com/package/@hetalhouse/cathode)
 [![types](https://img.shields.io/npm/types/@hetalhouse/cathode.svg)](https://www.npmjs.com/package/@hetalhouse/cathode)
 
-![cathode — workspace view in phosphor theme, curved trades grid + candle chart + log feed + terminal](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/hero.png)
+![cathode workspace — the curvature slider sweeping the whole CRT workspace from flat to fishbowl: curved trades grid, three.js candle chart, log feed, terminal](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/demo.gif)
 
-<sup>Captured from `demo/App.vue` — workspace tab, `theme="phosphor"`. Reproduce with `npm run capture:hero` (see `tools/capture-hero.mjs`).</sup>
+**[▶ Try it live](https://bradyhouse.github.io/cathode/)** — the curve slider is the fun part. Full tour (workspace → three.js candles → themes):
+
+https://github.com/hetalhouse/cathode/raw/main/docs/demo.mp4
+
+<sup>Stills reproduce with `npm run capture:hero` (see `tools/capture-hero.mjs`); the workspace hero lives at [`docs/hero.png`](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/hero.png).</sup>
 
 ---
 
