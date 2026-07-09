@@ -10,9 +10,8 @@
 
 ![cathode workspace — the curvature slider sweeping the whole CRT workspace from flat to fishbowl: curved trades grid, three.js candle chart, log feed, terminal](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/demo.gif)
 
-**[▶ Try it live](https://bradyhouse.github.io/cathode/)** — the curve slider is the fun part. Full tour (workspace → three.js candles → themes):
-
-https://github.com/hetalhouse/cathode/raw/main/docs/demo.mp4
+**[▶ Try it live](https://bradyhouse.github.io/cathode/)** — the curve slider is the fun part.
+**[🎬 Watch the 20-second tour (mp4)](https://github.com/hetalhouse/cathode/raw/main/docs/demo.mp4)** — workspace → three.js candles → themes.
 
 <sup>Stills reproduce with `npm run capture:hero` (see `tools/capture-hero.mjs`); the workspace hero lives at [`docs/hero.png`](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/hero.png).</sup>
 
