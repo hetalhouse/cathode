@@ -1,8 +1,8 @@
-# stratchai/cathode — Roadmap
+# hetalhouse/cathode — Roadmap
 
 > **Purpose.** A CRT-styled Vue 3 component library for financial UIs.
 > The defining aesthetic: barrel-distorted canvas controls that look like
-> terminals from a trading floor. Built to be consumed by `stratchai/dashboard`
+> terminals from a trading floor. Built to be consumed by `@stratchai/dashboard`
 > and eventually published as a public npm package.
 >
 > Every component must degrade gracefully when WebGL is unavailable.
@@ -237,7 +237,7 @@ a browser.
 | 7 | `npm publish` to public registry | pending |
 
 ### Phase 4 → done when
-- `npm install @stratchai/cathode` works from a fresh project
+- `npm install @hetalhouse/cathode` works from a fresh project
 - All three components documented with prop tables
 - CI green
 

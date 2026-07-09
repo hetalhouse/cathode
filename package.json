@@ -1,17 +1,17 @@
 {
-  "name": "@stratchai/cathode",
-  "version": "0.1.6",
+  "name": "@hetalhouse/cathode",
+  "version": "0.2.0",
   "description": "A retro CRT curved-screen datagrid for the web",
   "license": "MIT",
-  "author": "stratchai",
+  "author": "Brady House <bradyhouse@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/stratchai/cathode.git"
+    "url": "git+https://github.com/hetalhouse/cathode.git"
   },
   "bugs": {
-    "url": "https://github.com/stratchai/cathode/issues"
+    "url": "https://github.com/hetalhouse/cathode/issues"
   },
-  "homepage": "https://github.com/stratchai/cathode#readme",
+  "homepage": "https://github.com/hetalhouse/cathode#readme",
   "keywords": [
     "datagrid",
     "vue",
@@ -21,7 +21,7 @@
     "phosphor",
     "trading-ui",
     "dashboard",
-    "stratchai"
+    "hetalhouse"
   ],
   "type": "module",
   "main": "dist/cathode.umd.cjs",

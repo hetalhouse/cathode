@@ -3,12 +3,12 @@
 > A retro CRT curved-screen datagrid for the web.
 > Barrel-distorted columns, phosphor aesthetics, more data per viewport.
 
-[![npm](https://img.shields.io/npm/v/@stratchai/cathode.svg)](https://www.npmjs.com/package/@stratchai/cathode)
-[![license](https://img.shields.io/npm/l/@stratchai/cathode.svg)](LICENSE)
-[![bundle size](https://img.shields.io/bundlephobia/minzip/@stratchai/cathode.svg)](https://bundlephobia.com/package/@stratchai/cathode)
-[![types](https://img.shields.io/npm/types/@stratchai/cathode.svg)](https://www.npmjs.com/package/@stratchai/cathode)
+[![npm](https://img.shields.io/npm/v/@hetalhouse/cathode.svg)](https://www.npmjs.com/package/@hetalhouse/cathode)
+[![license](https://img.shields.io/npm/l/@hetalhouse/cathode.svg)](LICENSE)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/@hetalhouse/cathode.svg)](https://bundlephobia.com/package/@hetalhouse/cathode)
+[![types](https://img.shields.io/npm/types/@hetalhouse/cathode.svg)](https://www.npmjs.com/package/@hetalhouse/cathode)
 
-![cathode — workspace view in phosphor theme, curved trades grid + candle chart + log feed + terminal](https://raw.githubusercontent.com/stratchai/cathode/main/docs/hero.png)
+![cathode — workspace view in phosphor theme, curved trades grid + candle chart + log feed + terminal](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/hero.png)
 
 <sup>Captured from `demo/App.vue` — workspace tab, `theme="phosphor"`. Reproduce with `npm run capture:hero` (see `tools/capture-hero.mjs`).</sup>
 
@@ -29,15 +29,15 @@ selectable, copyable, accessible.
 ## Quick start
 
 ```bash
-npm install @stratchai/cathode
+npm install @hetalhouse/cathode
 ```
 
 Minimal — drop a grid into a Vue 3 app:
 
 ```vue
 <script setup lang="ts">
-import { CathodeGrid, type ColDef } from '@stratchai/cathode'
-import '@stratchai/cathode/style'
+import { CathodeGrid, type ColDef } from '@hetalhouse/cathode'
+import '@hetalhouse/cathode/style'
 
 const cols: ColDef[] = [
   { field: 'ticker', headerName: 'Ticker' },
@@ -62,9 +62,9 @@ That's it. The grid renders, the curve activates, the phosphor glow lights up.
 
 ```vue
 <script setup lang="ts">
-import { CathodeGrid } from '@stratchai/cathode'
-import '@stratchai/cathode/style'
-import type { ColDef, GridApi } from '@stratchai/cathode'
+import { CathodeGrid } from '@hetalhouse/cathode'
+import '@hetalhouse/cathode/style'
+import type { ColDef, GridApi } from '@hetalhouse/cathode'
 
 const cols: ColDef[] = [
   { field: 'ticker',   headerName: 'Ticker',  width: 90 },
@@ -107,11 +107,11 @@ function onGridReady(e: { api: GridApi }) {
 | Works well for | Choose something else for |
 |----------------|---------------------------|
 | 100s–10ks of rows | 100k+ rows (use [TanStack Table](https://tanstack.com/table) — virtual scrolling is on cathode's roadmap but not yet shipped) |
-| Vue 3 apps | React (no wrapper yet — see [ROADMAP.md](https://github.com/stratchai/cathode/blob/main/ROADMAP.md)) |
+| Vue 3 apps | React (no wrapper yet — see [ROADMAP.md](https://github.com/hetalhouse/cathode/blob/main/ROADMAP.md)) |
 | Dashboards, status panels, sci-fi UIs | Spreadsheet-style apps with row grouping / aggregation (not yet shipped) |
 | Built-in CRT / phosphor aesthetic | Plain Material / Tailwind look — pass `theme="none"` and bring your own CSS vars |
 
-See [`ROADMAP.md`](https://github.com/stratchai/cathode/blob/main/ROADMAP.md) for what's coming next.
+See [`ROADMAP.md`](https://github.com/hetalhouse/cathode/blob/main/ROADMAP.md) for what's coming next.
 
 ---
 
@@ -205,10 +205,10 @@ fit alongside an existing `:root` / `html.light` token system:
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](https://github.com/stratchai/cathode/blob/main/CONTRIBUTING.md) for development setup, the Playwright regression-test suite, and the release process.
+See [`CONTRIBUTING.md`](https://github.com/hetalhouse/cathode/blob/main/CONTRIBUTING.md) for development setup, the Playwright regression-test suite, and the release process.
 
 ---
 
 ## License
 
-MIT — © stratchai
+MIT — © Brady House

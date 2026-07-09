@@ -5,7 +5,7 @@ Thanks for considering a contribution. The project is small enough that a brief 
 ## Development setup
 
 ```bash
-git clone https://github.com/stratchai/cathode
+git clone https://github.com/hetalhouse/cathode
 cd cathode
 npm install
 

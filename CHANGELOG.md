@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 — 2026-07-09
+
+**Renamed:** `@stratchai/cathode` → **`@hetalhouse/cathode`**; repo moved to
+[github.com/hetalhouse/cathode](https://github.com/hetalhouse/cathode) (old URLs redirect).
+cathode is a UI library — it now lives with the frontend libs (`@hetalhouse`), while
+`@stratchai` remains the trading-infrastructure suite. No API changes. The demo page
+is retitled to match what it always was: a full CRT trading workspace.
+
 ## [0.1.6] — 2026-06-02 (README — drop link to private workspace repo)
 
 ### Fixed
