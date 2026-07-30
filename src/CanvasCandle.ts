@@ -65,7 +65,24 @@ export interface PriceOverlayBand {
   label?:         string
 }
 
-export type PriceOverlay = PriceOverlayLine | PriceOverlayBand
+/**
+ * Horizontal price line at a CONSTANT price, spanning the plot to the price
+ * axis, with a right-edge coloured label tag — the "order line" look (entry /
+ * take-profit / stop / live price), à la a broker's chart. Unlike PriceOverlayLine
+ * (a per-candle indicator series), this is a single flat level.
+ */
+export interface PriceOverlayHLine {
+  kind:       'hline'
+  price:      number
+  color:      string
+  /** Right-edge tag text. Defaults to the formatted price; '' hides the tag. */
+  label?:     string
+  /** Dashed by default (order-line style); pass false for a solid line. */
+  dashed?:    boolean
+  lineWidth?: number
+}
+
+export type PriceOverlay = PriceOverlayLine | PriceOverlayBand | PriceOverlayHLine
 
 // ── Trade markers ────────────────────────────────────────────────────────────
 
@@ -486,7 +503,10 @@ export function drawCandle(canvas: HTMLCanvasElement, opts: DrawCandleOpts): voi
 
   // ── Indicator overlays (lines + bands, drawn over candles) ──────────────────
   if (opts.overlays?.length) {
-    for (const ov of opts.overlays) drawOverlay(ctx, ov, win, bounds, panes, opts.slotW)
+    for (const ov of opts.overlays) {
+      if (ov.kind === 'hline') drawHLine(ctx, ov, W, bounds, panes, c, compact)
+      else drawOverlay(ctx, ov, win, bounds, panes, opts.slotW)
+    }
   }
 
   // ── Trade markers (entry / exit triangles) ──────────────────────────────────
@@ -541,7 +561,7 @@ function drawOverlay(
 
   if (ov.kind === 'line') {
     drawSeriesLine(ctx, ov.data, win.firstIdx, last, slotW, bounds, panes, ov.color, ov.lineWidth ?? 1, ov.dashed === true)
-  } else {
+  } else if (ov.kind === 'band') {
     // Band: filled area between upper and lower, with stroked edges + optional middle.
     const fillColor = applyAlpha(ov.color, ov.fillAlpha ?? 0.08)
     drawSeriesBand(ctx, ov.upper, ov.lower, win.firstIdx, last, slotW, bounds, panes, fillColor)
@@ -552,6 +572,47 @@ function drawOverlay(
     }
   }
 
+  ctx.restore()
+}
+
+/** Horizontal price line + right-edge coloured tag — the broker "order line"
+ *  look (entry / TP / SL / live price). Clipped to the price pane; skipped when
+ *  the level is off-pane so the tag never collides with the axis chrome. */
+function drawHLine(
+  ctx:     CanvasRenderingContext2D,
+  ov:      PriceOverlayHLine,
+  W:       number,
+  bounds:  PriceBounds,
+  panes:   PaneLayout,
+  c:       CandleColors,
+  compact: boolean,
+): void {
+  const y = priceToY(ov.price, bounds, panes.priceY0, panes.priceY1)
+  if (y < panes.priceY0 - 0.5 || y > panes.priceY1 + 0.5) return // off visible range
+  const padR = compact ? PADDING_RIGHT_COMPACT : PADDING_RIGHT
+  const yy = Math.round(y) + 0.5
+  ctx.save()
+  ctx.strokeStyle = ov.color
+  ctx.lineWidth   = ov.lineWidth ?? 1
+  ctx.setLineDash(ov.dashed === false ? [] : [4, 3])
+  ctx.beginPath()
+  ctx.moveTo(PADDING_LEFT, yy)
+  ctx.lineTo(W - padR, yy)
+  ctx.stroke()
+  ctx.setLineDash([])
+
+  const label = ov.label ?? fmtPrice(ov.price)
+  if (label !== '') {
+    ctx.font         = AXIS_FONT
+    ctx.textBaseline = 'middle'
+    ctx.textAlign    = 'left'
+    const textW = ctx.measureText(label).width
+    const padX = 4, padY = 2
+    ctx.fillStyle = ov.color
+    ctx.fillRect(W - padR + 2, y - 7 - padY, textW + padX * 2, 14 + padY * 2)
+    ctx.fillStyle = c.bg && !c.bg.startsWith('rgba(0,0,0,0)') ? c.bg : '#0d1520'
+    ctx.fillText(label, W - padR + 2 + padX, y)
+  }
   ctx.restore()
 }
 
@@ -661,7 +722,7 @@ function drawLegend(
   // Filter to just labelled overlays — unlabelled ones are presumed
   // background context (e.g. a calc-only series the consumer doesn't want
   // listed in the legend).
-  const labelled = overlays.filter(o => !!o.label)
+  const labelled = overlays.filter(o => o.kind !== 'hline' && !!o.label) // hlines self-label via their right-edge tag
   if (!labelled.length) return
 
   ctx.save()
@@ -705,7 +766,7 @@ function drawLegend(
       ctx.lineTo(sx + SWATCH_W, rowY)
       ctx.stroke()
       ctx.setLineDash([])
-    } else {
+    } else if (o.kind === 'band') {
       // Band: small rectangle filled + outlined
       ctx.fillStyle   = applyAlpha(o.color, o.fillAlpha ?? 0.20)
       ctx.fillRect(sx, rowY - 4, SWATCH_W, 8)
