@@ -51,7 +51,23 @@ export interface PriceOverlayBand {
     middleDashed?: boolean;
     label?: string;
 }
-export type PriceOverlay = PriceOverlayLine | PriceOverlayBand;
+/**
+ * Horizontal price line at a CONSTANT price, spanning the plot to the price
+ * axis, with a right-edge coloured label tag — the "order line" look (entry /
+ * take-profit / stop / live price), à la a broker's chart. Unlike PriceOverlayLine
+ * (a per-candle indicator series), this is a single flat level.
+ */
+export interface PriceOverlayHLine {
+    kind: 'hline';
+    price: number;
+    color: string;
+    /** Right-edge tag text. Defaults to the formatted price; '' hides the tag. */
+    label?: string;
+    /** Dashed by default (order-line style); pass false for a solid line. */
+    dashed?: boolean;
+    lineWidth?: number;
+}
+export type PriceOverlay = PriceOverlayLine | PriceOverlayBand | PriceOverlayHLine;
 /**
  * Triangle annotation at a (timestamp, price) point on the price pane.
  * Resolved to the nearest candle by start timestamp; if no candle within

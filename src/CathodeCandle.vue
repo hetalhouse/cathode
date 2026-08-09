@@ -183,7 +183,10 @@ function initThree() {
   }
 
   try {
-    renderer = new THREE.WebGLRenderer({ canvas: canvasEl.value, antialias: false, alpha: true })
+    // preserveDrawingBuffer keeps the frame readable after compositing so hosts can
+    // export the chart via canvas.toDataURL() (0.3.1 — without it the read is blank).
+    // Candle canvases are small; the copy cost is negligible.
+    renderer = new THREE.WebGLRenderer({ canvas: canvasEl.value, antialias: false, alpha: true, preserveDrawingBuffer: true })
   } catch {
     webglFailed = true
   }
