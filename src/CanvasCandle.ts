@@ -503,8 +503,9 @@ export function drawCandle(canvas: HTMLCanvasElement, opts: DrawCandleOpts): voi
 
   // ── Indicator overlays (lines + bands, drawn over candles) ──────────────────
   if (opts.overlays?.length) {
+    const clamped = { above: 0, below: 0 } // stack off-scale hline tags per edge
     for (const ov of opts.overlays) {
-      if (ov.kind === 'hline') drawHLine(ctx, ov, W, bounds, panes, c, compact)
+      if (ov.kind === 'hline') drawHLine(ctx, ov, W, bounds, panes, c, compact, clamped)
       else drawOverlay(ctx, ov, win, bounds, panes, opts.slotW)
     }
   }
@@ -586,32 +587,51 @@ function drawHLine(
   panes:   PaneLayout,
   c:       CandleColors,
   compact: boolean,
+  clamped: { above: number; below: number } = { above: 0, below: 0 },
 ): void {
-  const y = priceToY(ov.price, bounds, panes.priceY0, panes.priceY1)
-  if (y < panes.priceY0 - 0.5 || y > panes.priceY1 + 0.5) return // off visible range
+  const rawY = priceToY(ov.price, bounds, panes.priceY0, panes.priceY1)
+  // An order line outside the candles' auto-scaled range (a −4% stop on a 1H
+  // window that spans ±1.5%, say) used to vanish entirely — the broker-chart
+  // behaviour is to CLAMP its tag to the pane edge with a direction arrow, so
+  // the level's existence and side stay visible without distorting the y-scale.
+  const above = rawY < panes.priceY0 - 0.5
+  const below = rawY > panes.priceY1 + 0.5
+  const offscale = above || below
+  const stack = offscale ? (above ? clamped.above++ : clamped.below++) : 0
+  const y = offscale
+    ? (above ? panes.priceY0 + 8 + stack * 20 : panes.priceY1 - 8 - stack * 20)
+    : rawY
   const padR = compact ? PADDING_RIGHT_COMPACT : PADDING_RIGHT
   const yy = Math.round(y) + 0.5
   ctx.save()
-  ctx.strokeStyle = ov.color
-  ctx.lineWidth   = ov.lineWidth ?? 1
-  ctx.setLineDash(ov.dashed === false ? [] : [4, 3])
-  ctx.beginPath()
-  ctx.moveTo(PADDING_LEFT, yy)
-  ctx.lineTo(W - padR, yy)
-  ctx.stroke()
-  ctx.setLineDash([])
+  if (!offscale) {
+    ctx.strokeStyle = ov.color
+    ctx.lineWidth   = ov.lineWidth ?? 1
+    ctx.setLineDash(ov.dashed === false ? [] : [4, 3])
+    ctx.beginPath()
+    ctx.moveTo(PADDING_LEFT, yy)
+    ctx.lineTo(W - padR, yy)
+    ctx.stroke()
+    ctx.setLineDash([])
+  }
 
-  const label = ov.label ?? fmtPrice(ov.price)
+  let label = ov.label ?? fmtPrice(ov.price)
+  if (offscale && label !== '') label = (above ? '↑ ' : '↓ ') + label
   if (label !== '') {
     ctx.font         = AXIS_FONT
     ctx.textBaseline = 'middle'
     ctx.textAlign    = 'left'
     const textW = ctx.measureText(label).width
     const padX = 4, padY = 2
+    // Off-scale tags sit INSIDE the plot at the pane edge (the axis gutter is
+    // y-ordered; a clamped price there would lie about its value).
+    const tagX = offscale ? W - padR - textW - padX * 2 - 2 : W - padR + 2
     ctx.fillStyle = ov.color
-    ctx.fillRect(W - padR + 2, y - 7 - padY, textW + padX * 2, 14 + padY * 2)
+    if (offscale) ctx.globalAlpha = 0.85
+    ctx.fillRect(tagX, y - 7 - padY, textW + padX * 2, 14 + padY * 2)
+    ctx.globalAlpha = 1
     ctx.fillStyle = c.bg && !c.bg.startsWith('rgba(0,0,0,0)') ? c.bg : '#0d1520'
-    ctx.fillText(label, W - padR + 2 + padX, y)
+    ctx.fillText(label, tagX + padX, y)
   }
   ctx.restore()
 }
