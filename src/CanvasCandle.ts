@@ -504,8 +504,12 @@ export function drawCandle(canvas: HTMLCanvasElement, opts: DrawCandleOpts): voi
   // ── Indicator overlays (lines + bands, drawn over candles) ──────────────────
   if (opts.overlays?.length) {
     const clamped = { above: 0, below: 0 } // stack off-scale hline tags per edge
+    // Hline tags live on the left rail, same corner as the legend chip — start
+    // clamped-above tags below it (legend box = 2×PAD_Y(5) + 14/row + 4 top).
+    const legendRows = opts.overlays.filter(o => o.kind !== 'hline' && !!o.label).length
+    const topInset = legendRows ? 4 + 10 + 14 * legendRows + 12 : 8
     for (const ov of opts.overlays) {
-      if (ov.kind === 'hline') drawHLine(ctx, ov, W, bounds, panes, c, compact, clamped)
+      if (ov.kind === 'hline') drawHLine(ctx, ov, W, bounds, panes, c, compact, clamped, topInset)
       else drawOverlay(ctx, ov, win, bounds, panes, opts.slotW)
     }
   }
@@ -588,6 +592,7 @@ function drawHLine(
   c:       CandleColors,
   compact: boolean,
   clamped: { above: number; below: number } = { above: 0, below: 0 },
+  topInset = 8, // clamp-above start — call site passes the legend height so pinned tags clear it
 ): void {
   const rawY = priceToY(ov.price, bounds, panes.priceY0, panes.priceY1)
   // An order line outside the candles' auto-scaled range (a −4% stop on a 1H
@@ -599,7 +604,7 @@ function drawHLine(
   const offscale = above || below
   const stack = offscale ? (above ? clamped.above++ : clamped.below++) : 0
   const y = offscale
-    ? (above ? panes.priceY0 + 8 + stack * 20 : panes.priceY1 - 8 - stack * 20)
+    ? (above ? panes.priceY0 + topInset + stack * 20 : panes.priceY1 - 8 - stack * 20)
     : rawY
   const padR = compact ? PADDING_RIGHT_COMPACT : PADDING_RIGHT
   const yy = Math.round(y) + 0.5
@@ -623,9 +628,11 @@ function drawHLine(
     ctx.textAlign    = 'left'
     const textW = ctx.measureText(label).width
     const padX = 4, padY = 2
-    // Off-scale tags sit INSIDE the plot at the pane edge (the axis gutter is
-    // y-ordered; a clamped price there would lie about its value).
-    const tagX = offscale ? W - padR - textW - padX * 2 - 2 : W - padR + 2
+    // Tags sit INSIDE the plot at its LEFT edge: the right gutter is the price
+    // axis's (tags there jumble with its labels — user report 2026-08-12), and
+    // the left side of a chart is usually the emptiest. Off-scale tags pin to
+    // the top/bottom edge there too, so every knob reads down the left rail.
+    const tagX = PADDING_LEFT + 2
     ctx.fillStyle = ov.color
     if (offscale) ctx.globalAlpha = 0.85
     ctx.fillRect(tagX, y - 7 - padY, textW + padX * 2, 14 + padY * 2)
