@@ -109,6 +109,18 @@ const effectiveSlotW = computed(() => Math.max(1, props.slotW * zoomLevel.value)
 
 let renderer:    THREE.WebGLRenderer | null = null
 let webglFailed  = false
+
+// Release the WebGL CONTEXT (not just GPU resources) on teardown. THREE's
+// dispose() frees programs/textures but leaves the context slot allocated until
+// GC — so rapid mount/unmount (source/tab switches, many panels) leaks contexts
+// past the browser's ~16-context cap, evicting a LIVE canvas and blanking it.
+// forceContextLoss() frees the slot immediately.
+function releaseRenderer() {
+  if (!renderer) return
+  try { renderer.forceContextLoss() } catch { /* no context / unsupported */ }
+  try { renderer.dispose() } catch { /* already torn down */ }
+  renderer = null
+}
 let scene:       THREE.Scene
 let camera:      THREE.OrthographicCamera
 let material:    THREE.ShaderMaterial
@@ -570,7 +582,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', scheduleResize)
   window.visualViewport?.removeEventListener('resize', scheduleResize)
   cancelAnimationFrame(resizeRaf)
-  renderer?.dispose()
+  releaseRenderer()
 })
 
 // ── Computed styles ───────────────────────────────────────────────────────────
