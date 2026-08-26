@@ -10,6 +10,7 @@ import {
   isOnFilterIcon, isOnResizeHandle, colLeft,
   HEADER_H, THEME_COLORS, screenToCanvas,
   aggregate, AGG_ROW_H,
+  wrapTextLines, rowHeightFor, buildRowOffsets, rowAtOffset, gridCellFont,
 } from './CanvasGrid'
 import {
   LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
@@ -162,6 +163,49 @@ const maxScrollX = computed(() => {
   return Math.max(0, totalW - canvasW.value)
 })
 
+// ── Variable row height (word-wrap columns) ───────────────────────────────────
+// A grid with no `wrap` column has rowHeights=null and every geometry helper
+// below falls back to the uniform props.rowHeight — zero behaviour change. Only
+// when a column declares `wrap: true` do rows grow to fit their wrapped text.
+
+let _measureCanvas: HTMLCanvasElement | null = null
+function measureCtx(): CanvasRenderingContext2D | null {
+  if (typeof document === 'undefined') return null
+  if (!_measureCanvas) _measureCanvas = document.createElement('canvas')
+  const ctx = _measureCanvas.getContext('2d')
+  if (ctx) ctx.font = gridCellFont()   // identical font to the renderer's cell draw
+  return ctx
+}
+
+const hasWrapCol = computed(() => displayCols.value.some(c => c.colDef.wrap))
+
+// Per-row heights parallel to filteredRows; null when no wrap column exists.
+const rowHeights = computed<number[] | null>(() => {
+  if (!hasWrapCol.value) return null
+  const ctx = measureCtx()
+  if (!ctx) return null
+  const wrapCols = displayCols.value.filter(c => c.colDef.wrap)
+  const base = props.rowHeight
+  return filteredRows.value.map(row => {
+    let maxLines = 1
+    for (const col of wrapCols) {
+      const lines = wrapTextLines(ctx, formatCell(col, row), Math.max(20, col.width - 16))
+      if (lines.length > maxLines) maxLines = lines.length
+    }
+    return rowHeightFor(maxLines, base)
+  })
+})
+
+const rowOffsets = computed<number[] | null>(() =>
+  rowHeights.value ? buildRowOffsets(rowHeights.value, filteredRows.value.length) : null
+)
+
+const totalRowsH = computed(() =>
+  rowOffsets.value
+    ? rowOffsets.value[filteredRows.value.length]
+    : filteredRows.value.length * props.rowHeight
+)
+
 // ── Viewport geometry ─────────────────────────────────────────────────────────
 
 const bodyH = computed(() => {
@@ -170,22 +214,29 @@ const bodyH = computed(() => {
 })
 
 const maxScrollY = computed(() =>
-  Math.max(0, filteredRows.value.length * props.rowHeight - bodyH.value)
+  Math.max(0, totalRowsH.value - bodyH.value)
 )
 
 const visibleRowCount = computed(() =>
   Math.max(1, Math.floor(bodyH.value / props.rowHeight))
 )
 
-const firstVisibleRow = computed(() =>
-  filteredRows.value.length === 0
-    ? 0
-    : Math.min(filteredRows.value.length - 1, Math.floor(scrollY.value / props.rowHeight))
-)
+const firstVisibleRow = computed(() => {
+  const n = filteredRows.value.length
+  if (n === 0) return 0
+  const idx = rowOffsets.value
+    ? rowAtOffset(rowOffsets.value, scrollY.value)
+    : Math.floor(scrollY.value / props.rowHeight)
+  return Math.min(n - 1, idx)
+})
 
-const lastVisibleRow = computed(() =>
-  Math.min(filteredRows.value.length - 1, firstVisibleRow.value + visibleRowCount.value - 1)
-)
+const lastVisibleRow = computed(() => {
+  const n = filteredRows.value.length
+  if (n === 0) return 0
+  if (rowOffsets.value)
+    return Math.min(n - 1, rowAtOffset(rowOffsets.value, scrollY.value + bodyH.value - 1))
+  return Math.min(n - 1, firstVisibleRow.value + visibleRowCount.value - 1)
+})
 
 // ── Cell value / format helpers ───────────────────────────────────────────────
 
@@ -297,8 +348,9 @@ watch(maxScrollY,  () => { scrollY.value = Math.min(scrollY.value, maxScrollY.va
 
 // Scroll the absolute row index into the visible viewport.
 function ensureRowVisible(absRow: number) {
-  const rowTop    = absRow * props.rowHeight
-  const rowBottom = rowTop + props.rowHeight
+  const offs      = rowOffsets.value
+  const rowTop    = offs ? offs[absRow]     : absRow * props.rowHeight
+  const rowBottom = offs ? offs[absRow + 1] : rowTop + props.rowHeight
   if (rowTop < scrollY.value) {
     scrollY.value = rowTop
   } else if (rowBottom > scrollY.value + bodyH.value) {
@@ -614,6 +666,7 @@ function redraw() {
       rows:        filteredRows.value,
       pinnedRows:  localPinned.value,
       rowHeight:   props.rowHeight,
+      rowHeights:  rowHeights.value ?? undefined,
       scrollY:     scrollY.value,
       scrollX:     scrollX.value,
       theme:       props.theme,
@@ -742,6 +795,7 @@ function onCanvasMouseMove(e: MouseEvent) {
     filteredRows.value.length, props.rowHeight,
     scrollY.value, offCanvas.height, localPinned.value.length, scrollX.value,
     aggregateRow.value !== null,
+    rowHeights.value ?? undefined,
   )
 
   hoveredRow.value = hit.area === 'body' ? hit.rowIdx : -1
@@ -808,6 +862,7 @@ function onCanvasClick(e: MouseEvent) {
     filteredRows.value.length, props.rowHeight,
     scrollY.value, offCanvas.height, localPinned.value.length, scrollX.value,
     aggregateRow.value !== null,
+    rowHeights.value ?? undefined,
   )
 
   // ── Header click — sort or filter ──────────────────────────────────────────

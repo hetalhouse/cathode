@@ -52,8 +52,76 @@ export const THEME_COLORS: Record<string, GridColors> = {
 }
 
 export const HEADER_H  = 30
-const FONT_SIZE        = 12
+export const FONT_SIZE  = 12
 const HDR_FONT_SIZE    = 10
+
+// ── Variable row-height (word-wrap) support ────────────────────────────────────
+// Per-line height and vertical padding for wrapped cells. Chosen so a
+// single-line wrapped cell equals a ~24px base row (14 + 2*5), and each extra
+// wrapped line adds LINE_H. Shared by the renderer (drawing) and CathodeGrid
+// (row-height measurement) so line counts and drawing stay in lockstep.
+export const LINE_H    = 14
+export const WRAP_VPAD = 5
+
+/** Grid data-cell font string — the SINGLE source of truth for measurement + draw. */
+export function gridCellFont(): string {
+  return `${FONT_SIZE}px system-ui, -apple-system, sans-serif`
+}
+
+/**
+ * Word-wrap `text` to fit `maxWidth` px at the ctx's CURRENT font. Caller must
+ * set `ctx.font = gridCellFont()` first. A single word wider than maxWidth is
+ * left on its own (over-long) line rather than force-broken — the cell clip
+ * handles the overflow.
+ */
+export function wrapTextLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const s = String(text ?? '')
+  if (!s) return ['']
+  const words = s.split(/\s+/).filter(Boolean)
+  if (words.length === 0) return ['']
+  const lines: string[] = []
+  let cur = ''
+  for (const w of words) {
+    const trial = cur ? cur + ' ' + w : w
+    if (!cur || ctx.measureText(trial).width <= maxWidth) {
+      cur = trial
+    } else {
+      lines.push(cur)
+      cur = w
+    }
+  }
+  if (cur) lines.push(cur)
+  return lines.length ? lines : ['']
+}
+
+/** Height (px) of a row whose tallest wrapped cell has `lineCount` lines. */
+export function rowHeightFor(lineCount: number, baseRowHeight: number): number {
+  return Math.max(baseRowHeight, lineCount * LINE_H + WRAP_VPAD * 2)
+}
+
+/**
+ * Prefix-sum of row tops. `offsets[i]` = y of row i's top; `offsets[rowCount]` =
+ * total content height. Only built when a grid actually has variable heights.
+ */
+export function buildRowOffsets(rowHeights: number[], rowCount: number): number[] {
+  const offs = new Array(rowCount + 1)
+  offs[0] = 0
+  for (let i = 0; i < rowCount; i++) offs[i + 1] = offs[i] + (rowHeights[i] ?? 0)
+  return offs
+}
+
+/** Largest row index `i` with `offsets[i] <= y` (the row containing y). Clamped ≥ 0. */
+export function rowAtOffset(offsets: number[], y: number): number {
+  if (y <= 0) return 0
+  let lo = 0
+  let hi = offsets.length - 1   // = rowCount
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1
+    if (offsets[mid] <= y) lo = mid
+    else hi = mid - 1
+  }
+  return lo
+}
 
 // ── Draw options ───────────────────────────────────────────────────────────────
 
@@ -62,6 +130,13 @@ export interface DrawGridOpts {
   rows:         any[]
   pinnedRows:   any[]
   rowHeight:    number
+  /**
+   * Optional per-row heights (parallel to `rows`) for variable-height rows —
+   * supplied only when a column has `wrap: true`. When omitted, every data row
+   * is `rowHeight` tall (the original uniform behaviour, byte-identical). Pinned
+   * and aggregate rows always use the uniform `rowHeight`.
+   */
+  rowHeights?:  number[]
   scrollY:      number        // vertical scroll offset (px)
   scrollX:      number        // horizontal scroll offset (px)
   theme:        string
@@ -233,8 +308,22 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
   ctx.rect(0, HEADER_H, W, bodyH)
   ctx.clip()
 
-  const startRow = Math.max(0, Math.floor(scrollY / rowHeight))
-  const endRow   = Math.min(rows.length, Math.ceil((scrollY + bodyH) / rowHeight))
+  // Per-row geometry. `rowHeights` is present only for wrap-enabled grids; when
+  // absent every helper reduces to the original uniform `rowHeight` math, so
+  // uniform grids render byte-identically and pay no offset-table cost.
+  const rhArr   = opts.rowHeights && opts.rowHeights.length === rows.length ? opts.rowHeights : null
+  const offsets = rhArr ? buildRowOffsets(rhArr, rows.length) : null
+  const rowTop  = (i: number) => offsets ? offsets[i]   : i * rowHeight
+  const rowHOf  = (i: number) => rhArr   ? rhArr[i]      : rowHeight
+
+  const startRow = offsets ? rowAtOffset(offsets, scrollY) : Math.max(0, Math.floor(scrollY / rowHeight))
+  let endRow: number
+  if (offsets) {
+    endRow = startRow
+    while (endRow < rows.length && rowTop(endRow) < scrollY + bodyH) endRow++
+  } else {
+    endRow = Math.min(rows.length, Math.ceil((scrollY + bodyH) / rowHeight))
+  }
 
   // Selection rectangle bounds — computed from the active cell + anchor.
   // When the anchor is missing (-1) the range collapses to the active cell.
@@ -253,21 +342,36 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
   let outerTop = Number.POSITIVE_INFINITY
   let outerBottom = Number.NEGATIVE_INFINITY
 
+  // Three-pass cell-text glow (matching CanvasLog) or a plain fill. `ctx.fillStyle`
+  // must already be the desired colour; `color` only drives the glow halo.
+  const paintText = (txt: string, px: number, py: number, color: string) => {
+    if (glow) {
+      ctx.shadowColor = color
+      ctx.shadowBlur  = 12; ctx.fillText(txt, px, py)
+      ctx.shadowBlur  = 6;  ctx.fillText(txt, px, py)
+      ctx.shadowBlur  = 2;  ctx.fillText(txt, px, py)
+      ctx.shadowBlur  = 0
+    } else {
+      ctx.fillText(txt, px, py)
+    }
+  }
+
   for (let ri = startRow; ri < endRow; ri++) {
     const row = rows[ri]
-    const ry  = HEADER_H + ri * rowHeight - scrollY
+    const rH  = rowHOf(ri)
+    const ry  = HEADER_H + rowTop(ri) - scrollY
 
     // Alternating row tint
     if (ri % 2 === 1) {
       ctx.fillStyle = c.rowAlt
-      ctx.fillRect(0, ry, W, rowHeight)
+      ctx.fillRect(0, ry, W, rH)
     }
 
     // Hover
     const inSelRowRange = ri >= selMinR && ri <= selMaxR
     if (ri === opts.hoveredRow && !inSelRowRange) {
       ctx.fillStyle = 'rgba(255,255,255,0.045)'
-      ctx.fillRect(0, ry, W, rowHeight)
+      ctx.fillRect(0, ry, W, rH)
     }
 
     // Single-cell selection still tints the full row (Excel does this too,
@@ -275,15 +379,15 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
     // below so cells outside the column range stay un-tinted.
     if (inSelRowRange && !isMultiCell) {
       ctx.fillStyle = hexToRgba(c.accent, 0.10)
-      ctx.fillRect(0, ry, W, rowHeight)
+      ctx.fillRect(0, ry, W, rH)
     }
 
     // Row bottom border
     ctx.strokeStyle = c.border
     ctx.lineWidth   = 1.5   // 1.5 survives bilinear sampling under barrel curve; 1 fades
     ctx.beginPath()
-    ctx.moveTo(0, ry + rowHeight - 0.5)
-    ctx.lineTo(W, ry + rowHeight - 0.5)
+    ctx.moveTo(0, ry + rH - 0.5)
+    ctx.lineTo(W, ry + rH - 0.5)
     ctx.stroke()
 
     // Cells
@@ -299,7 +403,7 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
       const inSelCellRect = inSelRowRange && ci >= selMinC && ci <= selMaxC
       if (inSelCellRect && isMultiCell) {
         ctx.fillStyle = hexToRgba(c.accent, 0.14)
-        ctx.fillRect(cx, ry, col.width, rowHeight)
+        ctx.fillRect(cx, ry, col.width, rH)
       }
 
       // Track outer rect pixels for the post-loop border stroke
@@ -307,7 +411,7 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
         if (cx < outerLeft)             outerLeft = cx
         if (cx + col.width > outerRight) outerRight = cx + col.width
         if (ry < outerTop)               outerTop = ry
-        if (ry + rowHeight > outerBottom) outerBottom = ry + rowHeight
+        if (ry + rH > outerBottom)       outerBottom = ry + rH
       }
 
       const rawStyle  = opts.getCellStyle(col, row)
@@ -317,31 +421,28 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
 
       ctx.save()
       ctx.beginPath()
-      ctx.rect(cx + 1, ry, col.width - 2, rowHeight)
+      ctx.rect(cx + 1, ry, col.width - 2, rH)
       ctx.clip()
 
-      ctx.font         = `${FONT_SIZE}px system-ui, -apple-system, sans-serif`
+      ctx.font         = gridCellFont()
       ctx.fillStyle    = textColor
       ctx.textBaseline = 'middle'
 
-      const xPos = align === 'right' ? cx + col.width - 8 : cx + 8
-      ctx.textAlign = align === 'right' ? 'right' : 'left'
-      const yPos = ry + rowHeight / 2
-
-      if (glow) {
-        // Three-pass cell-text glow matching CanvasLog. Compounds bloom so
-        // each cell value reads as lit-from-within phosphor rather than
-        // just tinted. Fixes "glow not visible on grid" feedback.
-        ctx.shadowColor = textColor
-        ctx.shadowBlur  = 12
-        ctx.fillText(text, xPos, yPos)
-        ctx.shadowBlur  = 6
-        ctx.fillText(text, xPos, yPos)
-        ctx.shadowBlur  = 2
-        ctx.fillText(text, xPos, yPos)
-        ctx.shadowBlur  = 0
+      if (col.colDef.wrap) {
+        // Wrapped, top-aligned multi-line — the row was sized to fit these lines.
+        ctx.textAlign = 'left'
+        const lines = wrapTextLines(ctx, text, Math.max(20, col.width - 16))
+        let ly = ry + WRAP_VPAD + LINE_H / 2
+        for (const ln of lines) {
+          if (ly - LINE_H / 2 >= ry + rH) break
+          paintText(ln, cx + 8, ly, textColor)
+          ly += LINE_H
+        }
       } else {
-        ctx.fillText(text, xPos, yPos)
+        // Single line, vertically centred within the (possibly tall) row.
+        const xPos = align === 'right' ? cx + col.width - 8 : cx + 8
+        ctx.textAlign = align === 'right' ? 'right' : 'left'
+        paintText(text, xPos, ry + rH / 2, textColor)
       }
       ctx.restore()
 
@@ -349,7 +450,7 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
       if (ri === opts.selectedRow && ci === opts.selectedCol) {
         ctx.strokeStyle = c.accent
         ctx.lineWidth   = 2
-        ctx.strokeRect(cx + 1.5, ry + 1.5, col.width - 3, rowHeight - 3)
+        ctx.strokeRect(cx + 1.5, ry + 1.5, col.width - 3, rH - 3)
       }
 
       // Cell right border
@@ -357,7 +458,7 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
       ctx.lineWidth   = 1.5   // 1.5 survives bilinear sampling under barrel curve; 1 fades
       ctx.beginPath()
       ctx.moveTo(cx + col.width - 0.5, ry)
-      ctx.lineTo(cx + col.width - 0.5, ry + rowHeight)
+      ctx.lineTo(cx + col.width - 0.5, ry + rH)
       ctx.stroke()
 
       cx += col.width
@@ -590,6 +691,7 @@ export function hitTest(
   pinnedCount: number,
   scrollX:     number,
   hasAggRow:   boolean = false,
+  rowHeights?: number[],
 ): { area: 'header' | 'body' | 'pinned' | 'agg' | 'none', colIdx: number, rowIdx: number } {
   const contentX = cx + scrollX   // map canvas x → content x
   let colIdx = -1
@@ -613,7 +715,9 @@ export function hitTest(
   }
 
   const bodyY  = cy - HEADER_H + scrollY
-  const rowIdx = Math.floor(bodyY / rowHeight)
+  const rowIdx = (rowHeights && rowHeights.length === rowCount)
+    ? rowAtOffset(buildRowOffsets(rowHeights, rowCount), bodyY)
+    : Math.floor(bodyY / rowHeight)
   if (rowIdx >= 0 && rowIdx < rowCount) return { area: 'body', colIdx, rowIdx }
 
   return { area: 'none', colIdx: -1, rowIdx: -1 }
