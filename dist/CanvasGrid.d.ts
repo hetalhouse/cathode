@@ -17,11 +17,39 @@ export interface GridColors {
 }
 export declare const THEME_COLORS: Record<string, GridColors>;
 export declare const HEADER_H = 30;
+export declare const FONT_SIZE = 12;
+export declare const LINE_H = 14;
+export declare const WRAP_VPAD = 5;
+/** Grid data-cell font string — the SINGLE source of truth for measurement + draw. */
+export declare function gridCellFont(): string;
+/**
+ * Word-wrap `text` to fit `maxWidth` px at the ctx's CURRENT font. Caller must
+ * set `ctx.font = gridCellFont()` first. A single word wider than maxWidth is
+ * left on its own (over-long) line rather than force-broken — the cell clip
+ * handles the overflow.
+ */
+export declare function wrapTextLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[];
+/** Height (px) of a row whose tallest wrapped cell has `lineCount` lines. */
+export declare function rowHeightFor(lineCount: number, baseRowHeight: number): number;
+/**
+ * Prefix-sum of row tops. `offsets[i]` = y of row i's top; `offsets[rowCount]` =
+ * total content height. Only built when a grid actually has variable heights.
+ */
+export declare function buildRowOffsets(rowHeights: number[], rowCount: number): number[];
+/** Largest row index `i` with `offsets[i] <= y` (the row containing y). Clamped ≥ 0. */
+export declare function rowAtOffset(offsets: number[], y: number): number;
 export interface DrawGridOpts {
     cols: ResolvedCol[];
     rows: any[];
     pinnedRows: any[];
     rowHeight: number;
+    /**
+     * Optional per-row heights (parallel to `rows`) for variable-height rows —
+     * supplied only when a column has `wrap: true`. When omitted, every data row
+     * is `rowHeight` tall (the original uniform behaviour, byte-identical). Pinned
+     * and aggregate rows always use the uniform `rowHeight`.
+     */
+    rowHeights?: number[];
     scrollY: number;
     scrollX: number;
     theme: string;
@@ -78,7 +106,7 @@ export declare function isOnFilterIcon(cx: number, colStartX: number, colWidth: 
 /** Is canvas x over the resize handle (right 6px) of a column? */
 export declare function isOnResizeHandle(cx: number, colStartX: number, colWidth: number): boolean;
 /** Hit-test a canvas-space coordinate → grid location */
-export declare function hitTest(cx: number, cy: number, cols: ResolvedCol[], rowCount: number, rowHeight: number, scrollY: number, canvasH: number, pinnedCount: number, scrollX: number, hasAggRow?: boolean): {
+export declare function hitTest(cx: number, cy: number, cols: ResolvedCol[], rowCount: number, rowHeight: number, scrollY: number, canvasH: number, pinnedCount: number, scrollX: number, hasAggRow?: boolean, rowHeights?: number[]): {
     area: 'header' | 'body' | 'pinned' | 'agg' | 'none';
     colIdx: number;
     rowIdx: number;

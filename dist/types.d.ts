@@ -32,6 +32,13 @@ export interface ColDef<T = any> {
     filter?: boolean;
     resizable?: boolean;
     hide?: boolean;
+    /**
+     * Word-wrap this column's text across multiple lines instead of clipping to
+     * one. Rows containing a wrapped cell grow in height to fit the wrapped
+     * lines (per-row variable height). Opt-in: a grid with no `wrap` column keeps
+     * its uniform `rowHeight` and the variable-height path stays dormant.
+     */
+    wrap?: boolean;
     /** Initial sort direction */
     sort?: 'asc' | 'desc' | null;
     valueGetter?: (params: ValueGetterParams<T>) => any;

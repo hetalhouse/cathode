@@ -704,6 +704,9 @@ function redraw() {
     rows:        filteredRows.value,
     pinnedRows:  localPinned.value,
     rowHeight:   props.rowHeight,
+    // Per-row variable heights for `wrap` columns — the MAIN WebGL path had drifted from
+    // the fallback path (line ~669) and dropped this, so wrapped rows never grew on-screen.
+    rowHeights:  rowHeights.value ?? undefined,
     scrollY:     scrollY.value,
     scrollX:     scrollX.value,
     theme:       props.theme,
