@@ -635,20 +635,25 @@ function hexToRgba(hex: string, alpha: number): string {
  * UV: x∈[0,1] left→right, y∈[0,1] bottom→top (Three.js convention).
  */
 export function applyBarrel(uvX: number, uvY: number, strength: number): [number, number] {
-  const ccX  = uvX - 0.5
-  const ccY  = uvY - 0.5
-  const sign = strength >= 0 ? 1 : -1
-  const dist = (ccX * ccX + ccY * ccY) * Math.abs(strength)
-  let dx     = ccX * (1 + dist) * dist * sign
-  let dy     = ccY * (1 + dist) * dist * sign
+  const ccX = uvX - 0.5
+  const ccY = uvY - 0.5
+  const as  = Math.abs(strength)
+  const dist = (ccX * ccX + ccY * ccY) * as
   if (strength < 0) {
-    // concave: border-pinned (see the GLSL barrel() comment) — headers and
-    // edge columns never leave the screen; the dish bows the interior only.
-    const pin = (1 - 4 * ccX * ccX) * (1 - 4 * ccY * ccY)
-    dx *= pin
-    dy *= pin
+    // concave: FAITHFUL shader mirror (full Y, no legacy attenuation) — the
+    // fit-to-content rescale overshoots [0,1] near edge midpoints, and an
+    // attenuated Y would misreport those as content (or corners as bezel),
+    // desynchronizing clicks from pixels. See the GLSL barrel() comment.
+    const cd = 0.5 * as
+    const cp = 0.5 * (1 + cd) * cd
+    const k  = 1 / (1 - 2 * cp)
+    const mx = (ccX + ccX * (1 + dist) * dist * -1) * k
+    const my = (ccY + ccY * (1 + dist) * dist * -1) * k
+    return [0.5 + mx, 0.5 + my]
   }
-  return [uvX + dx, uvY + dy * 0.15]   // Y attenuated to match shader
+  const dx = ccX * (1 + dist) * dist
+  const dy = ccY * (1 + dist) * dist
+  return [uvX + dx, uvY + dy * 0.15]   // Y attenuated to match shader (legacy convex quirk)
 }
 
 /**

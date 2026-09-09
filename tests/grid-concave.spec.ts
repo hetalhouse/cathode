@@ -7,12 +7,13 @@ import { curvatureToStrength } from '../src/lensShader';
  * Concave bending (negative curvature). The barrel pipeline is signed:
  * positive = convex (classic CRT bulge), negative = concave (pincushion).
  * Guards three things:
- *   1. the shared curvature→strength mapping (concave branch boosted — the
- *      border-pinning damps interior bow, so −45 needs more raw strength)
- *   2. concave is BORDER-PINNED: headers / edge columns can never leave the
- *      screen (the 0.5.0 mapping pushed edge content off-display at high
- *      strength — the header-vanishing bug), and CPU hit-testing stays
- *      coherent with the GPU pixels (no bezel false-positives)
+ *   1. the shared curvature→strength mapping (linear, symmetric — the fit
+ *      rescale lives in the barrel map itself, not the mapping)
+ *   2. concave FIT-TO-CONTENT: the full dish silhouette is kept, but the
+ *      sampled field is rescaled so screen corners hit the texture corners —
+ *      every content pixel (headers, edge columns) is displayed at ANY
+ *      strength (0.5.0 cropped the outer ~8%; 0.5.1 pinned the border and
+ *      flattened the look), and CPU hit-testing mirrors the GPU faithfully
  *   3. the shader visibly renders three distinct states (convex / flat /
  *      concave) rather than silently clamping negatives
  */
@@ -25,45 +26,48 @@ test.describe('curvatureToStrength + signed barrel math', () => {
   test('mapping: endpoints, sign, and flatness', () => {
     expect(curvatureToStrength(0)).toBe(0);
     expect(curvatureToStrength(45)).toBeCloseTo(0.55, 10);
-    expect(curvatureToStrength(-45)).toBeCloseTo(-1.4, 10);
+    expect(curvatureToStrength(-45)).toBeCloseTo(-0.55, 10);
     expect(curvatureToStrength(20)).toBeGreaterThan(0);
     expect(curvatureToStrength(-20)).toBeLessThan(0);
   });
 
-  test('concave is border-pinned: edges never move, interior bows', () => {
+  test('concave fit-to-content: corners exact, midlines pinch, full header strip displayed', () => {
     const s = curvatureToStrength(-45);
-    // Border pinned exactly — headers (top edge), first/last columns, corners:
-    for (const [x, y] of [[0.5, 1], [0.5, 0], [0, 0.5], [1, 0.5], [1, 1], [0, 0]] as const) {
+    // Screen corners sample EXACTLY the texture corners (nothing can crop):
+    for (const [x, y] of [[1, 1], [0, 0], [1, 0], [0, 1]] as const) {
       const [bx, by] = applyBarrel(x, y, s);
-      expect(bx, `x pinned at ${x},${y}`).toBeCloseTo(x, 10);
-      expect(by, `y pinned at ${x},${y}`).toBeCloseTo(y, 10);
+      expect(bx, `corner x at ${x},${y}`).toBeCloseTo(x, 10);
+      expect(by, `corner y at ${x},${y}`).toBeCloseTo(y, 10);
     }
-    // Interior genuinely bows inward (the dish):
-    const [ix, iy] = applyBarrel(0.25, 0.25, s);
-    expect(ix).toBeGreaterThan(0.25 + 0.005);
-    expect(iy).toBeGreaterThan(0.25 + 0.0005); // Y attenuated ×0.15 in the CPU mirror
+    // Edge midpoints overshoot [0,1] — the pincushion pinch (renders as bezel):
+    expect(applyBarrel(0.5, 1, s)[1]).toBeGreaterThan(1);
+    expect(applyBarrel(1, 0.5, s)[0]).toBeGreaterThan(1);
+    // The user-facing guarantee: the header strip (texture top 5%) is sampled
+    // across the FULL width — for every column band some screen pixel displays it.
+    const seen = new Array(20).fill(false);
+    for (let sx = 0; sx <= 1.0001; sx += 0.005) {
+      for (let sy = 1; sy >= 0.70; sy -= 0.004) {
+        const [tx, ty] = applyBarrel(sx, sy, s);
+        if (ty >= 0.95 && ty <= 1 && tx >= 0 && tx <= 1) seen[Math.min(19, Math.floor(tx * 20))] = true;
+      }
+    }
+    expect(seen.every(Boolean), `header visible in all 20 column bands: ${seen}`).toBe(true);
   });
 
-  test('concave stays in range, convex pushes outward, no fold-over', () => {
+  test('monotonic, no fold-over; convex unchanged', () => {
     const s = curvatureToStrength(-45);
-    // corner: convex leaves [0,1] (bezel); concave corner is pinned (no bezel)
     const [cx] = applyBarrel(1, 1, curvatureToStrength(45));
-    expect(cx).toBeGreaterThan(1);
-    // dense sweep: concave samples never leave [0,1] and never fold past center
-    for (let x = 0; x <= 1.001; x += 0.05) for (let y = 0; y <= 1.001; y += 0.05) {
-      const [bx, by] = applyBarrel(x, y, s);
-      expect(bx).toBeGreaterThanOrEqual(-1e-9);
-      expect(bx).toBeLessThanOrEqual(1 + 1e-9);
-      expect(by).toBeGreaterThanOrEqual(-1e-9);
-      expect(by).toBeLessThanOrEqual(1 + 1e-9);
+    expect(cx).toBeGreaterThan(1); // convex corner still overshoots into bezel
+    // axes: strictly monotone about the center (no fold along rows/columns).
+    // (Diagonal extreme corners fold slightly — a pre-existing 0.5.0-map quirk.)
+    for (let x = 0; x <= 1.001; x += 0.02) {
+      const [bx] = applyBarrel(x, 0.5, s);
       if (x > 0.5) expect(bx).toBeGreaterThan(0.5);
       if (x < 0.5) expect(bx).toBeLessThan(0.5);
     }
-    // screenToCanvas: concave must NEVER report the bezel region
-    for (const [sx, sy] of [[0, 0], [799, 0], [0, 599], [799, 599], [400, 300]] as const) {
-      const [mx] = screenToCanvas(sx, sy, 800, 600, s);
-      expect(mx, `bezel at ${sx},${sy}`).toBeGreaterThanOrEqual(0);
-    }
+    // the pinch IS bezel (by design) at edge midpoints; the center is content
+    expect(screenToCanvas(400, 0, 800, 600, s)[0]).toBe(-1);
+    expect(screenToCanvas(400, 300, 800, 600, s)[0]).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -90,7 +94,8 @@ test.describe('CathodeGrid concave rendering + interaction', () => {
       await page.waitForTimeout(250);
       const box = await canvas.boundingBox();
       if (!box) throw new Error('canvas not found');
-      return page.screenshot({ clip: { x: box.x, y: box.y, width: 60, height: 40 } });
+      // top-center: flat=content flush, convex=thin bezel arc, concave=deep arc + bowed header
+      return page.screenshot({ clip: { x: box.x + box.width / 2 - 60, y: box.y, width: 120, height: 80 } });
     };
     const flat = await shot(0);
     const convex = await shot(45);
@@ -99,13 +104,15 @@ test.describe('CathodeGrid concave rendering + interaction', () => {
     expect(Buffer.compare(concave, flat), 'concave must differ from flat').not.toBe(0);
     expect(Buffer.compare(concave, convex), 'concave must differ from convex').not.toBe(0);
 
-    // hit-testing under full concave: click near the left edge (max distortion),
+    // hit-testing under full concave: click left-of-center content (the extreme
+    // left edge is pinch-BEZEL at −45 by design — clicks there correctly no-op),
     // extend 1×1 → 2×2, copy — a TSV rectangle proves clicks map to real cells
     await slider.fill('-45');
     await page.waitForTimeout(250);
     const box = await canvas.boundingBox();
     if (!box) throw new Error('canvas not found');
-    await page.mouse.click(box.x + 60, box.y + HEADER_H + 40);
+    // deep concave pulls the header far down-screen — probe well into the body
+    await page.mouse.click(box.x + 300, box.y + HEADER_H + 150);
     await page.waitForTimeout(100);
     await page.keyboard.press('Shift+ArrowRight');
     await page.keyboard.press('Shift+ArrowDown');

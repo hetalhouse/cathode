@@ -147,18 +147,24 @@ const FRAG = `
   vec2 barrel(vec2 uv) {
     // Signed bend: magnitude from |strength|, direction applied after.
     // CONVEX (+): classic barrel — corners sample past the texture → bezel.
-    // CONCAVE (−): inward sampling would push edge content (headers, first/
-    // last columns) off-screen entirely, so the displacement is faded to zero
-    // at the rectangle border: the FRAME stays pinned and the glass dishes
-    // inward — no content is ever lost, the bow reads through interior rows.
-    // (Physically truer to a tube, too: the bezel doesn't move.)
+    // CONCAVE (−): the full 0.5.0 dish, plus a fit-to-content rescale. The
+    // raw inward map samples a shrunken region, so the texture's outer
+    // margin (headers, edge columns) was never displayed at high strength.
+    // Scaling the sampled field so the screen CORNERS land exactly on the
+    // texture corners guarantees every content pixel is drawn; the sampled
+    // range then overshoots [0,1] at the edge MIDPOINTS, which renders as
+    // the classic pincushion silhouette — content pinching inward on each
+    // side, corners touching, the header riding the bowed top edge.
     vec2  cc   = uv - 0.5;
-    float dist = dot(cc, cc) * abs(uStrength);
-    vec2  d    = cc * (1.0 + dist) * dist * sign(uStrength);
+    float as   = abs(uStrength);
+    float dist = dot(cc, cc) * as;
+    vec2  m    = cc + cc * (1.0 + dist) * dist * sign(uStrength);
     if (uStrength < 0.0) {
-      d *= (1.0 - 4.0 * cc.x * cc.x) * (1.0 - 4.0 * cc.y * cc.y);
+      float cd = 0.5 * as;                        // corner dist = |cc|²·as at (.5,.5)
+      float cp = 0.5 * (1.0 + cd) * cd;           // corner inward pull
+      m /= (1.0 - 2.0 * cp);                      // corners → exactly ±0.5
     }
-    return uv + d;
+    return vec2(0.5) + m;
   }
 
   ${LENS_FRAG_FN}
