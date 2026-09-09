@@ -1,6 +1,6 @@
 {
   "name": "@hetalhouse/cathode",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "A retro CRT curved-screen datagrid for the web",
   "license": "MIT",
   "author": "Brady House <bradyhouse@gmail.com>",
@@ -49,7 +49,8 @@
     "test:debug": "PWDEBUG=1 playwright test",
     "capture:hero": "bash tools/capture-hero.sh",
     "build:demo:pages": "vite build --base=/cathode/",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "capture:bend": "bash tools/capture-bend.sh"
   },
   "peerDependencies": {
     "three": "^0.170.0",

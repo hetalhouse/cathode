@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { collectConsoleErrors } from './_helpers';
-import { applyBarrel, screenToCanvas } from '../src/CanvasGrid';
+import { applyBarrel, screenToCanvas, isOnResizeHandle, isOnFilterIcon } from '../src/CanvasGrid';
 import { curvatureToStrength } from '../src/lensShader';
 
 /**
@@ -68,6 +68,26 @@ test.describe('curvatureToStrength + signed barrel math', () => {
     // the pinch IS bezel (by design) at edge midpoints; the center is content
     expect(screenToCanvas(400, 0, 800, 600, s)[0]).toBe(-1);
     expect(screenToCanvas(400, 300, 800, 600, s)[0]).toBeGreaterThanOrEqual(0);
+  });
+});
+
+test.describe('scale-aware header hit zones', () => {
+  test('center local scale ≈ fit-rescale factor at −45; zones widen accordingly', () => {
+    const s = curvatureToStrength(-45);
+    // local canvas-per-screen density at the screen center (two-point probe,
+    // same math hitScaleX uses): ≈ k = 1/(1−2·cornerPull) ≈ 1.54 at −45
+    const [a] = applyBarrel(0.495, 0.5, s);
+    const [b] = applyBarrel(0.505, 0.5, s);
+    const local = Math.abs(b - a) / 0.01;
+    expect(local).toBeGreaterThan(1.4);
+    expect(local).toBeLessThan(1.7);
+    // the 6px handle at scale 1.54 accepts a hit 9px out; at scale 1 it doesn't
+    expect(isOnResizeHandle(100 - 8, 0, 100, local)).toBe(true);
+    expect(isOnResizeHandle(100 - 8, 0, 100)).toBe(false);
+    // filter icon zone widens the same way, still capped at the column edge
+    expect(isOnFilterIcon(100 - 30, 0, 100, local)).toBe(true);
+    expect(isOnFilterIcon(100 - 30, 0, 100)).toBe(false);
+    expect(isOnFilterIcon(101, 0, 100, local)).toBe(false);
   });
 });
 

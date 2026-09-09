@@ -687,14 +687,16 @@ export function colLeft(ci: number, cols: ResolvedCol[]): number {
 }
 
 /** Is canvas x over the filter icon (right 24px) of a column? */
-export function isOnFilterIcon(cx: number, colStartX: number, colWidth: number): boolean {
-  return cx >= colStartX + colWidth - 24 && cx < colStartX + colWidth
+export function isOnFilterIcon(cx: number, colStartX: number, colWidth: number, scale = 1): boolean {
+  return cx >= colStartX + colWidth - 24 * scale && cx < colStartX + colWidth
 }
 
-/** Is canvas x over the resize handle (right 6px) of a column? */
-export function isOnResizeHandle(cx: number, colStartX: number, colWidth: number): boolean {
+/** Is canvas x over the resize handle (right 6px) of a column? `scale` widens the
+ *  zone by the LOCAL canvas-px-per-screen-px factor so the on-screen target keeps
+ *  its size under distortion (deep concave shrinks center targets ~35%). */
+export function isOnResizeHandle(cx: number, colStartX: number, colWidth: number, scale = 1): boolean {
   const right = colStartX + colWidth
-  return cx >= right - 6 && cx <= right + 1
+  return cx >= right - 6 * scale && cx <= right + 1 * scale
 }
 
 /** Hit-test a canvas-space coordinate → grid location */

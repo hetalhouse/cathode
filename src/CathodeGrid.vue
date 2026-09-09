@@ -380,6 +380,7 @@ let resizeActive      = false
 let resizeColId       = ''
 let resizeStartX      = 0
 let resizeStartDispW  = 0   // display width at resize start
+let resizeScale       = 1   // local canvas-px-per-screen-px at the grab (concave shrinks it on screen)
 let wasDragging       = false
 
 // Pan-to-scroll (click+drag in body)
@@ -390,10 +391,11 @@ let panStartScrollX = 0
 let panStartScrollY = 0
 let panMoved        = false
 
-function startColResize(colId: string, startClientX: number) {
+function startColResize(colId: string, startClientX: number, scale = 1) {
   resizeActive     = true
   resizeColId      = colId
   resizeStartX     = startClientX
+  resizeScale      = scale   // canvas px per screen px at the grab point (distortion-aware)
   resizeStartDispW = displayCols.value.find(c => c.colId === colId)?.width ?? 100
   wasDragging      = false
 }
@@ -413,7 +415,7 @@ function onGlobalMouseMove(e: MouseEvent) {
   if (!resizeActive) return
 
   const W               = canvasW.value
-  const desiredDispW    = Math.max(30, resizeStartDispW + (e.clientX - resizeStartX))
+  const desiredDispW    = Math.max(30, resizeStartDispW + (e.clientX - resizeStartX) * resizeScale)
   const otherHints      = resolvedCols.value
     .filter(c => c.colId !== resizeColId)
     .reduce((s, c) => s + c.width, 0)
@@ -749,11 +751,11 @@ function redraw() {
 
 // ── Canvas coordinate mapping ─────────────────────────────────────────────────
 
-function canvasCoords(e: MouseEvent): [number, number] {
+function canvasXYAt(clientX: number, clientY: number): [number, number] {
   if (!canvasEl.value) return [-1, -1]
   const rect = canvasEl.value.getBoundingClientRect()
-  const sx   = e.clientX - rect.left
-  const sy   = e.clientY - rect.top
+  const sx   = clientX - rect.left
+  const sy   = clientY - rect.top
   // Apply the same barrel transform the shader uses, in reverse, so
   // hit-testing lands on the canvas cell the user actually SEES under
   // their cursor. Without this, high curvature compresses edge columns
@@ -764,6 +766,25 @@ function canvasCoords(e: MouseEvent): [number, number] {
   const strength = curvatureToStrength(props.curvature)
   const [cx, cy] = screenToCanvas(sx, sy, W, H, strength)
   return cx < 0 ? [-1, -1] : [cx, cy]
+}
+function canvasCoords(e: MouseEvent): [number, number] {
+  return canvasXYAt(e.clientX, e.clientY)
+}
+
+// Local hit scale: canvas px per screen px at the cursor (two-point probe through
+// the same barrel mapping), relative to the flat density. The fixed canvas-px hit
+// zones (6px resize handle, 24px filter icon) and the resize drag delta are scaled
+// by it so their ON-SCREEN size/speed stay constant under distortion — at −45
+// concave the fit rescale shrinks center targets ~35% otherwise. Clamped ≥1 so
+// flat/convex behavior is byte-identical to before.
+function hitScaleX(e: MouseEvent): number {
+  if (!canvasEl.value) return 1
+  const [a] = canvasXYAt(e.clientX - 4, e.clientY)
+  const [b] = canvasXYAt(e.clientX + 4, e.clientY)
+  if (a < 0 || b < 0) return 1
+  const rect = canvasEl.value.getBoundingClientRect()
+  const flat = (canvasEl.value.width || rect.width) / rect.width
+  return Math.max(1, Math.abs(b - a) / 8 / flat)
 }
 
 // ── Mouse wheel ───────────────────────────────────────────────────────────────
@@ -828,7 +849,7 @@ function onCanvasMouseMove(e: MouseEvent) {
     const clx     = colLeft(hit.colIdx, displayCols.value)
     const contentCx = cx + scrollX.value
     canvasEl.value!.style.cursor =
-      col && isOnResizeHandle(contentCx, clx, col.width) ? 'col-resize' : 'pointer'
+      col && isOnResizeHandle(contentCx, clx, col.width, hitScaleX(e)) ? 'col-resize' : 'pointer'
   } else if (hit.area === 'body') {
     canvasEl.value!.style.cursor = 'pointer'
   } else {
@@ -862,11 +883,12 @@ function onCanvasMouseDown(e: MouseEvent) {
   }
 
   const contentCx = cx + scrollX.value
+  const hs = hitScaleX(e)
   for (let ci = 0; ci < displayCols.value.length; ci++) {
     const col = displayCols.value[ci]
     const clx = colLeft(ci, displayCols.value)
-    if (col.colDef.resizable !== false && isOnResizeHandle(contentCx, clx, col.width)) {
-      startColResize(col.colId, e.clientX)
+    if (col.colDef.resizable !== false && isOnResizeHandle(contentCx, clx, col.width, hs)) {
+      startColResize(col.colId, e.clientX, hs)
       return
     }
   }
@@ -893,7 +915,7 @@ function onCanvasClick(e: MouseEvent) {
     const clx       = colLeft(hit.colIdx, displayCols.value)
     const contentCx = cx + scrollX.value
 
-    if (col.colDef.filter && isOnFilterIcon(contentCx, clx, col.width)) {
+    if (col.colDef.filter && isOnFilterIcon(contentCx, clx, col.width, hitScaleX(e))) {
       e.stopPropagation()
       if (activeFilter.value === col.colId) {
         activeFilter.value = null
