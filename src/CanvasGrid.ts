@@ -624,6 +624,105 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`
 }
 
+
+// ── Overlay surfaces (0.6) ────────────────────────────────────────────────────
+// Floating widgets drawn INTO the offscreen canvas AFTER the body pass, so they
+// ride the same warp shader as the panel itself — a DOM popup floats flat over
+// a curved screen and looks off-world at high bend. First citizen: the header
+// filter popup. Contract: layout + draw + hit all in CANVAS space; hit runs
+// BEFORE the grid's own paths; fixed-px affordances widen by the local warp
+// density (the hitScaleX pattern).
+
+export interface OverlayBox { x: number; y: number; w: number; h: number }
+export interface FilterPopupLayout { box: OverlayBox; input: OverlayBox; clear: OverlayBox | null }
+
+const POPUP_W = 190
+const POPUP_H = 34
+
+/** Canvas-space popup geometry, anchored under the column's header, clamped to the panel. */
+export function layoutFilterPopup(canvasW: number, anchorX: number, hasValue: boolean): FilterPopupLayout {
+  const x = Math.max(4, Math.min(anchorX, canvasW - POPUP_W - 4))
+  const y = HEADER_H + 6
+  const clearW = hasValue ? 26 : 0
+  return {
+    box:   { x, y, w: POPUP_W, h: POPUP_H },
+    input: { x: x + 9, y: y + 5, w: POPUP_W - 18 - clearW, h: POPUP_H - 10 },
+    clear: hasValue ? { x: x + POPUP_W - 28, y, w: 28, h: POPUP_H } : null,
+  }
+}
+
+const inBox = (cx: number, cy: number, b: OverlayBox, padX = 0) =>
+  cx >= b.x - padX && cx <= b.x + b.w + padX && cy >= b.y && cy <= b.y + b.h
+
+/** Which popup zone a canvas point is over. `scale` widens the ✕ like the header icons. */
+export function hitFilterPopup(cx: number, cy: number, l: FilterPopupLayout, scale = 1): 'input' | 'clear' | 'inside' | 'outside' {
+  if (l.clear && inBox(cx, cy, l.clear, 4 * (scale - 1))) return 'clear'
+  if (inBox(cx, cy, l.input)) return 'input'
+  if (inBox(cx, cy, l.box)) return 'inside'
+  return 'outside'
+}
+
+/** Draw the popup: panel + value/placeholder + caret + optional ✕. Value overflow keeps the TAIL visible (that's where the caret is). */
+export function drawFilterPopup(
+  ctx: CanvasRenderingContext2D,
+  l: FilterPopupLayout,
+  value: string,
+  caretOn: boolean,
+  colors: GridColors,
+): void {
+  const { box, input, clear } = l
+  ctx.save()
+  // panel — solid ground even on the transparent 'none' theme, accent-keyed frame
+  ctx.fillStyle = 'rgba(8,12,22,0.94)'
+  ctx.strokeStyle = colors.accent
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.roundRect(box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1, 4)
+  ctx.fill()
+  ctx.stroke()
+  // input well
+  ctx.fillStyle = 'rgba(255,255,255,0.05)'
+  ctx.beginPath()
+  ctx.roundRect(input.x, input.y, input.w, input.h, 3)
+  ctx.fill()
+  // text (clip to the well; keep the tail when overflowing)
+  ctx.beginPath()
+  ctx.rect(input.x, input.y, input.w, input.h)
+  ctx.clip()
+  ctx.font = gridCellFont()
+  ctx.textBaseline = 'middle'
+  const ty = input.y + input.h / 2 + 1
+  const pad = 5
+  if (value) {
+    ctx.fillStyle = colors.text
+    const tw = ctx.measureText(value).width
+    const tx = tw > input.w - 2 * pad - 2 ? input.x + input.w - pad - 2 - tw : input.x + pad
+    ctx.fillText(value, tx, ty)
+    if (caretOn) {
+      ctx.fillStyle = colors.accent
+      ctx.fillRect(Math.min(tx + tw + 1, input.x + input.w - pad), input.y + 4, 1.5, input.h - 8)
+    }
+  } else {
+    ctx.fillStyle = colors.textHeader
+    ctx.fillText('Filter…', input.x + pad, ty)
+    if (caretOn) {
+      ctx.fillStyle = colors.accent
+      ctx.fillRect(input.x + pad, input.y + 4, 1.5, input.h - 8)
+    }
+  }
+  ctx.restore()
+  // ✕ clear
+  if (clear) {
+    ctx.save()
+    ctx.font = gridCellFont()
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = colors.textHeader
+    ctx.fillText('✕', clear.x + clear.w / 2, clear.y + clear.h / 2 + 1)
+    ctx.restore()
+  }
+}
+
 // ── Barrel-distortion hit-testing ─────────────────────────────────────────────
 
 /**

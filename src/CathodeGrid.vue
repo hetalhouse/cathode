@@ -8,6 +8,7 @@ import type { ColDef, ColState, GridApi, ResolvedCol } from './types'
 import {
   drawGrid, hitTest,
   isOnFilterIcon, isOnResizeHandle, colLeft,
+  layoutFilterPopup, drawFilterPopup, hitFilterPopup, type FilterPopupLayout,
   HEADER_H, THEME_COLORS, screenToCanvas,
   aggregate, AGG_ROW_H,
   wrapTextLines, rowHeightFor, buildRowOffsets, rowAtOffset, gridCellFont,
@@ -107,9 +108,28 @@ const activeFilter  = ref<string | null>(null)
 // convention: y=1 at top). LENS_INACTIVE = (-999,-999) = lens not drawn.
 const mouseLensUV: MouseLensUV = { ...LENS_INACTIVE }
 
-// Filter popup
-const filterPopupPos   = ref({ x: 0, y: HEADER_H })
+// Filter popup — drawn INTO the offscreen canvas (overlay surface, 0.6) so it
+// warps with the panel; a hidden real <input> (the "ghost") carries focus, IME,
+// and keystrokes while the glyphs + caret are ours. filterAnchorX is the
+// popup's canvas-space anchor (column left, viewport coords).
 const filterPopupValue = ref('')
+const filterAnchorX    = ref(0)
+const filterGhostEl    = ref<HTMLInputElement | null>(null)
+let   filterLayout: FilterPopupLayout | null = null
+const caretOn = ref(true)
+let caretTimer: ReturnType<typeof setInterval> | null = null
+watch(activeFilter, (open) => {
+  if (caretTimer) { clearInterval(caretTimer); caretTimer = null }
+  if (open) {
+    caretOn.value = true
+    caretTimer = setInterval(() => { caretOn.value = !caretOn.value; redraw() }, 530)
+    nextTick(() => filterGhostEl.value?.focus())
+  } else {
+    filterLayout = null
+    filterGhostEl.value?.blur()
+  }
+  redraw()
+})
 
 // ── Column ID helper ──────────────────────────────────────────────────────────
 
@@ -703,6 +723,7 @@ function redraw() {
       formatCell,
       getCellStyle,
     })
+    drawPopupOverlay()
     const ctx2d = canvasEl.value.getContext('2d')
     if (ctx2d) ctx2d.drawImage(offCanvas, 0, 0)
     return
@@ -745,8 +766,19 @@ function redraw() {
     aggregateRow: aggregateRow.value,
   })
 
+  drawPopupOverlay()
   texture.needsUpdate = true
   renderer.render(scene, camera)
+}
+
+// Draw the filter popup into offCanvas after the body pass — it rides the warp.
+function drawPopupOverlay() {
+  if (!activeFilter.value || !offCanvas?.width) return
+  const ctx = offCanvas.getContext('2d')
+  if (!ctx) return
+  filterLayout = layoutFilterPopup(offCanvas.width, filterAnchorX.value, !!filterPopupValue.value)
+  const colors = THEME_COLORS[props.theme] ?? THEME_COLORS['none']
+  drawFilterPopup(ctx, filterLayout, filterPopupValue.value, caretOn.value, colors)
 }
 
 // ── Canvas coordinate mapping ─────────────────────────────────────────────────
@@ -833,6 +865,16 @@ function onCanvasMouseMove(e: MouseEvent) {
   const [cx, cy] = canvasCoords(e)
   if (cx < 0) { hoveredRow.value = -1; redraw(); return }
 
+  if (activeFilter.value && filterLayout) {
+    const zone = hitFilterPopup(cx, cy, filterLayout, hitScaleX(e))
+    if (zone !== 'outside') {
+      hoveredRow.value = -1
+      canvasEl.value!.style.cursor = zone === 'clear' ? 'pointer' : 'text'
+      redraw()
+      return
+    }
+  }
+
   const hit = hitTest(
     cx, cy, displayCols.value,
     filteredRows.value.length, props.rowHeight,
@@ -869,6 +911,7 @@ function onCanvasMouseLeave() {
 function onCanvasMouseDown(e: MouseEvent) {
   const [cx, cy] = canvasCoords(e)
   if (cx < 0) return
+  if (activeFilter.value && filterLayout && hitFilterPopup(cx, cy, filterLayout, hitScaleX(e)) !== 'outside') return
 
   if (cy >= HEADER_H) {
     // Body click — start pan. Allow event to bubble so CathodeContainer can
@@ -901,6 +944,15 @@ function onCanvasClick(e: MouseEvent) {
   const [cx, cy] = canvasCoords(e)
   if (cx < 0) { activeFilter.value = null; return }
 
+  // Popup overlay eats its clicks before any grid path (it is drawn on top).
+  if (activeFilter.value && filterLayout) {
+    const zone = hitFilterPopup(cx, cy, filterLayout, hitScaleX(e))
+    if (zone === 'clear') { clearFilter(); return }
+    if (zone !== 'outside') { filterGhostEl.value?.focus(); return }
+    // outside → close, then let the click fall through to the grid as usual
+    activeFilter.value = null
+  }
+
   const hit = hitTest(
     cx, cy, displayCols.value,
     filteredRows.value.length, props.rowHeight,
@@ -924,8 +976,8 @@ function onCanvasClick(e: MouseEvent) {
         filterPopupValue.value = colFilters[col.colId]?.startsWith('__eq__')
           ? colFilters[col.colId].slice(6)
           : (colFilters[col.colId] ?? '')
-        // Position popup at screen x (content x minus current scroll)
-        filterPopupPos.value   = { x: Math.max(0, clx - scrollX.value), y: HEADER_H }
+        // Anchor in viewport canvas coords (content x minus current scroll)
+        filterAnchorX.value    = Math.max(0, clx - scrollX.value)
       }
     } else if (col.colDef.sortable !== false) {
       activeFilter.value = null
@@ -964,8 +1016,15 @@ function onCanvasClick(e: MouseEvent) {
 
 function onDocClick(e: MouseEvent) {
   if (!activeFilter.value) return
-  if (!(e.target as HTMLElement).closest?.('.cathode-filter-popup'))
-    activeFilter.value = null
+  // The popup lives IN the canvas now — a canvas click that lands inside the
+  // popup's zones must not count as "outside" (the old DOM popup shielded
+  // itself with @click.stop; the canvas can't, so the doc-level closer maps
+  // the point and checks the zones itself).
+  if (e.target === canvasEl.value && filterLayout) {
+    const [cx, cy] = canvasCoords(e)
+    if (cx >= 0 && hitFilterPopup(cx, cy, filterLayout, hitScaleX(e)) !== 'outside') return
+  }
+  activeFilter.value = null
 }
 
 // ── Scroll selected column into view ─────────────────────────────────────────
@@ -1337,35 +1396,6 @@ onUnmounted(() => {
 
 const themeC = computed(() => THEME_COLORS[props.theme] ?? THEME_COLORS['none'])
 
-const filterPopupStyle = computed<CSSProperties>(() => ({
-  position:   'absolute',
-  left:       `${filterPopupPos.value.x}px`,
-  top:        `${filterPopupPos.value.y}px`,
-  zIndex:     100,
-  background: themeC.value.headerBg,
-  border:     `1px solid ${themeC.value.accent}`,
-  color:      themeC.value.text,
-  boxShadow:  '0 4px 14px rgba(0,0,0,0.55)',
-  borderRadius: '3px',
-  display:    'flex',
-  alignItems: 'center',
-  gap:        '4px',
-  padding:    '5px',
-  minWidth:   '160px',
-}))
-
-const filterInputStyle = computed<CSSProperties>(() => ({
-  background:  themeC.value.bg,
-  border:      `1px solid ${themeC.value.border}`,
-  color:       themeC.value.text,
-  fontFamily:  "system-ui, -apple-system, sans-serif",
-  fontSize:    '11px',
-  padding:     '3px 7px',
-  borderRadius: '2px',
-  outline:     'none',
-  flex:        '1',
-}))
-
 const paginStyle = computed<CSSProperties>(() => ({
   background: themeC.value.headerBg,
   borderTop:  `1px solid ${themeC.value.border}`,
@@ -1400,27 +1430,19 @@ const accentColor = computed(() => themeC.value.accent)
     />
 
     <!-- Filter popup DOM overlay — fully theme-coloured -->
-    <div
+    <!-- Ghost input (0.6): the popup is DRAWN into the canvas (it warps with the
+         panel); this invisible real input carries focus, IME and keystrokes. -->
+    <input
       v-if="activeFilter"
-      class="cathode-filter-popup"
-      :style="filterPopupStyle"
-      @click.stop
-    >
-      <input
-        :style="filterInputStyle"
-        :value="filterPopupValue"
-        placeholder="Filter…"
-        autofocus
-        @input="onFilterInput"
-        @keydown.escape="clearFilter"
-      />
-      <button
-        v-if="filterPopupValue"
-        :style="{ background: 'none', border: 'none', color: themeC.text,
-                  opacity: '0.55', cursor: 'pointer', fontSize: '11px', padding: '0 4px' }"
-        @click="clearFilter"
-      >✕</button>
-    </div>
+      ref="filterGhostEl"
+      class="cathode-filter-ghost"
+      aria-label="Filter column"
+      :value="filterPopupValue"
+      autofocus
+      @input="onFilterInput"
+      @keydown.escape="clearFilter"
+      @keydown.enter="activeFilter = null"
+    />
 
     <!-- Scroll info bar -->
     <div v-if="pagination" class="cathode-pagination" :style="paginStyle">
@@ -1495,6 +1517,13 @@ const accentColor = computed(() => themeC.value.accent)
   font-size: 11px;
 }
 .cathode-pagination button:disabled { opacity: 0.3; cursor: default; }
+
+/* Ghost filter input — a real focusable input with zero visual footprint; the
+   popup pixels live in the canvas so they bend with the panel. */
+.cathode-filter-ghost {
+  position: absolute; left: 0; top: 0; width: 1px; height: 1px;
+  opacity: 0; border: none; padding: 0; pointer-events: none;
+}
 .cathode-pagination button:not(:disabled):hover { border-color: #40a0f0; }
 
 .cathode-page-info   { margin-left: auto; font-size: 10px; opacity: 0.75; }

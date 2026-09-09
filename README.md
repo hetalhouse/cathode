@@ -12,7 +12,7 @@
 
 ![the signed curvature sweep — convex CRT bulge through flat into the concave dish, headers riding the bowed top edge the whole way](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/bend.gif)
 
-<sup>Curvature is **signed** (−45…45): positive bulges convex like a CRT tube, negative dishes concave — the panel wraps around a focal point like a room. Sweep reproduces with `npm run capture:bend`.</sup>
+<sup>Curvature is **signed** (−45…45): positive bulges convex like a CRT tube, negative dishes concave — the panel wraps around a focal point like a room. Sweep reproduces with `npm run capture:bend`. Header filter popups are drawn in-canvas, so they bend too.</sup>
 
 **[▶ Try it live](https://bradyhouse.github.io/cathode/)** — the curve slider is the fun part.
 **[🎬 Watch the 26-second tour (mp4)](https://github.com/hetalhouse/cathode/raw/main/docs/demo.mp4)** — workspace → magnifier lens → three.js candles → themes.
