@@ -764,6 +764,7 @@ export function screenToCanvas(
   sx: number, sy: number,
   W:  number, H:  number,
   strength: number,
+  texW = W, texH = H,
 ): [number, number] {
   const uvX = sx / W
   const uvY = 1 - sy / H                          // Three.js UV: y=1 at top
@@ -772,8 +773,10 @@ export function screenToCanvas(
 
   if (buvX < 0 || buvX > 1 || buvY < 0 || buvY > 1) return [-1, -1]
 
-  // flipY=true (Three.js default): UV y=1 → canvas row 0 (top)
-  return [buvX * W, (1 - buvY) * H]
+  // flipY=true (Three.js default): UV y=1 → canvas row 0 (top). texW/texH are
+  // the TEXTURE (offscreen content) dims — wider than W/H when the bend-field
+  // gain is rendering extra columns into the same screen space.
+  return [buvX * texW, (1 - buvY) * texH]
 }
 
 // ── Column geometry (no horizontal scroll — cols fill width) ──────────────────

@@ -139,6 +139,7 @@ const columnDefs: ColDef[] = [
 const defaultColDef: ColDef = { resizable: true, sortable: true }
 const gridApi    = ref<GridApi | null>(null)
 const curvature  = ref(25)
+const bendField  = ref(true)
 const scanlines  = ref(true)
 const magnify    = ref(false)
 // Force every panel into the CathodeLoader state — lets visitors see the
@@ -690,6 +691,7 @@ seedLogEntries()
       <!-- Shared controls (both tabs) -->
       <label>Curve {{ curvature }} · {{ curvature < 0 ? 'concave' : curvature > 0 ? 'convex' : 'flat' }}</label>
       <input type="range" min="-45" max="45" step="1" v-model.number="curvature" style="width:110px" />
+      <label><input type="checkbox" v-model="bendField" data-testid="cf-bendfield" /> Field</label>
       <label><input type="checkbox" v-model="scanlines" /> Scanlines</label>
       <label><input type="checkbox" v-model="glow" />      Glow</label>
       <label>
@@ -730,7 +732,7 @@ seedLogEntries()
     <div v-show="activeTab === 'grid'" class="tab-content">
       <CathodeLoader
         v-if="showLoaders"
-        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow" :bend-field="bendField"
         label="LOADING TRADES"
       />
       <CathodeGrid
@@ -754,7 +756,7 @@ seedLogEntries()
     <div v-show="activeTab === 'log'" class="tab-content">
       <CathodeLoader
         v-if="showLoaders"
-        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow" :bend-field="bendField"
         label="OPENING LOG"
       />
       <CathodeLog
@@ -773,7 +775,7 @@ seedLogEntries()
     <div v-show="activeTab === 'candle'" class="tab-content">
       <CathodeLoader
         v-if="showLoaders"
-        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow" :bend-field="bendField"
         label="STREAMING CANDLES"
       />
       <CathodeCandle
@@ -796,7 +798,7 @@ seedLogEntries()
     <div v-show="activeTab === 'terminal'" class="tab-content">
       <CathodeLoader
         v-if="showLoaders"
-        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow" :bend-field="bendField"
         label="ATTACHING TTY"
       />
       <CathodeTerminal
@@ -826,7 +828,7 @@ seedLogEntries()
         <template #default="{ resizeKey }">
           <CathodeLoader
             v-if="showLoaders"
-            :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+            :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow" :bend-field="bendField"
             label="LOADING TRADES"
           />
           <CathodeGrid
@@ -852,7 +854,7 @@ seedLogEntries()
         <template #default="{ resizeKey }">
           <CathodeLoader
             v-if="showLoaders"
-            :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+            :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow" :bend-field="bendField"
             label="STREAMING CANDLES"
           />
           <CathodeCandle
@@ -874,7 +876,7 @@ seedLogEntries()
       <CathodeContainer id="log" title="Log" :curvature="curvature" canvas>
         <CathodeLoader
           v-if="showLoaders"
-          :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+          :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow" :bend-field="bendField"
           label="OPENING LOG"
         />
         <CathodeLog
@@ -893,7 +895,7 @@ seedLogEntries()
       <CathodeContainer id="terminal" title="Terminal" :curvature="curvature" canvas>
         <CathodeLoader
           v-if="showLoaders"
-          :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow"
+          :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow" :bend-field="bendField"
           label="ATTACHING TTY"
         />
         <CathodeTerminal

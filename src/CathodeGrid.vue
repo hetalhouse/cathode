@@ -16,7 +16,7 @@ import {
 import {
   LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
   createLensUniforms, writeLensUniforms, eventToLensUV,
-  LENS_INACTIVE, type MouseLensUV, curvatureToStrength,
+  LENS_INACTIVE, type MouseLensUV, curvatureToStrength, fieldScale,
 } from './lensShader'
 import './cathode.css'
 
@@ -52,6 +52,14 @@ const props = withDefaults(defineProps<{
    * which matches the existing grid's behaviour under barrel curvature.
    */
   magnify?:   boolean
+  /**
+   * The bend buys field-of-view (default true): the offscreen content canvas
+   * widens by exactly the factor the warp can absorb without cropping, so
+   * bending the panel SLIDES MORE COLUMNS IN instead of just distorting the
+   * same ones (+54% width at −45 concave, +16% at +45 convex). false = the
+   * pre-0.7 behavior (bend is purely visual).
+   */
+  bendField?: boolean
 }>(), {
   rowData:            () => [],
   rowHeight:          28,
@@ -60,6 +68,7 @@ const props = withDefaults(defineProps<{
   scanlines:          true,
   glow:               true,
   magnify:            false,
+  bendField:          true,
   pagination:         true,
   paginationPageSize: 200,   // effectively unlimited; auto-fit drives page size
 })
@@ -88,8 +97,10 @@ const refreshKey    = ref(0)
 
 // ── Canvas dimensions (set by sizeToContainer) ────────────────────────────────
 
-const canvasW = ref(0)
+const canvasW = ref(0)   // CONTENT width (≥ screen width under bendField)
 const canvasH = ref(0)
+const screenW = ref(0)   // visible panel dims (the warp squeezes content into these)
+const screenH = ref(0)
 
 // ── Interaction state ─────────────────────────────────────────────────────────
 
@@ -656,16 +667,21 @@ function sizeToContainer() {
   const W = wrapEl.value.clientWidth
   const H = wrapEl.value.clientHeight - (props.pagination ? PAGINATION_H : 0)
   if (!W || !H) return
+  screenW.value = W
+  screenH.value = H
+  // Bend-field gain: the content canvas is WIDER than the screen by the factor
+  // the warp absorbs — extra columns slide in as the panel bends.
+  const contentW = props.bendField ? Math.round(W * fieldScale(props.curvature)) : W
 
   // If offCanvas dimensions change, the CanvasTexture's GPU storage is stale —
   // Three.js will try to texSubImage2D into the old (smaller) allocation and
   // the driver throws GL_INVALID_VALUE: 'Offset overflows texture dimensions',
   // producing garbled pixel output. Dispose the texture so Three.js
   // reallocates GPU storage on the next render.
-  const sizeChanged = offCanvas.width !== W || offCanvas.height !== H
-  offCanvas.width  = W
+  const sizeChanged = offCanvas.width !== contentW || offCanvas.height !== H
+  offCanvas.width  = contentW
   offCanvas.height = H
-  canvasW.value    = W
+  canvasW.value    = contentW
   canvasH.value    = H
   scrollX.value    = Math.max(0, Math.min(maxScrollX.value, scrollX.value))
   scrollY.value    = Math.max(0, Math.min(maxScrollY.value, scrollY.value))
@@ -725,7 +741,8 @@ function redraw() {
     })
     drawPopupOverlay()
     const ctx2d = canvasEl.value.getContext('2d')
-    if (ctx2d) ctx2d.drawImage(offCanvas, 0, 0)
+    // fallback has no warp — squeeze the (possibly wider) content uniformly
+    if (ctx2d) ctx2d.drawImage(offCanvas, 0, 0, offCanvas.width, offCanvas.height, 0, 0, canvasEl.value.width, canvasEl.value.height)
     return
   }
 
@@ -739,7 +756,7 @@ function redraw() {
   material.uniforms.uVignette.value  = isPaper ? 0.0 : 1.0
   ;(material.uniforms.uBezel.value as THREE.Color).set(themeColors.bg)
 
-  writeLensUniforms(material, props.magnify, mouseLensUV, offCanvas.width, offCanvas.height)
+  writeLensUniforms(material, props.magnify, mouseLensUV, screenW.value || offCanvas.width, screenH.value || offCanvas.height)
 
   drawGrid(offCanvas, {
     cols:        displayCols.value,
@@ -793,10 +810,10 @@ function canvasXYAt(clientX: number, clientY: number): [number, number] {
   // their cursor. Without this, high curvature compresses edge columns
   // inward visually but hit-tests still expect raw pixel coordinates,
   // so resize handles and filter icons drift away from where they're drawn.
-  const W        = canvasEl.value.width  || rect.width
-  const H        = canvasEl.value.height || rect.height
+  const W        = rect.width
+  const H        = rect.height
   const strength = curvatureToStrength(props.curvature)
-  const [cx, cy] = screenToCanvas(sx, sy, W, H, strength)
+  const [cx, cy] = screenToCanvas(sx, sy, W, H, strength, offCanvas.width || W, offCanvas.height || H)
   return cx < 0 ? [-1, -1] : [cx, cy]
 }
 function canvasCoords(e: MouseEvent): [number, number] {
@@ -814,9 +831,7 @@ function hitScaleX(e: MouseEvent): number {
   const [a] = canvasXYAt(e.clientX - 4, e.clientY)
   const [b] = canvasXYAt(e.clientX + 4, e.clientY)
   if (a < 0 || b < 0) return 1
-  const rect = canvasEl.value.getBoundingClientRect()
-  const flat = (canvasEl.value.width || rect.width) / rect.width
-  return Math.max(1, Math.abs(b - a) / 8 / flat)
+  return Math.max(1, Math.abs(b - a) / 8)
 }
 
 // ── Mouse wheel ───────────────────────────────────────────────────────────────
@@ -1295,7 +1310,7 @@ watch(() => props.theme,     () => redraw())
 // Curvature changes the container padding (via --curvature CSS var), which shrinks
 // the canvas area. sizeToContainer must run after Vue patches the DOM so clientWidth
 // reflects the new padding before we redraw.
-watch(() => props.curvature, () => nextTick(sizeToContainer))
+watch(() => [props.curvature, props.bendField], () => nextTick(sizeToContainer))
 watch(() => props.scanlines, () => redraw())
 watch(() => props.glow,      () => redraw())
 watch(() => props.magnify,   (on) => {

@@ -119,7 +119,7 @@ export declare function applyBarrel(uvX: number, uvY: number, strength: number):
  * offscreen canvas2d coordinate that is visually displayed there.
  * Returns [-1,-1] when the position is in the black bezel region.
  */
-export declare function screenToCanvas(sx: number, sy: number, W: number, H: number, strength: number): [number, number];
+export declare function screenToCanvas(sx: number, sy: number, W: number, H: number, strength: number, texW?: number, texH?: number): [number, number];
 /** Canvas-space left edge of column ci (scrollX removed — always 0) */
 export declare function colLeft(ci: number, cols: ResolvedCol[]): number;
 /** Is canvas x over the filter icon (right 24px) of a column? */

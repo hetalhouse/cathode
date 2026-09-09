@@ -29,6 +29,29 @@ export function curvatureToStrength(curvature: number): number {
 }
 
 /**
+ * How much WIDER a content canvas the bend can display with nothing cropped —
+ * the bend's field-of-view gain. Derived from the same barrel geometry:
+ *   • concave: the fit-to-content rescale factor k = 1/(1−2·cornerPull) — the
+ *     zoom-out the dish already imposes is repurposed to show MORE columns
+ *     instead of shrinking the same ones (+54% at −45).
+ *   • convex: the edge-midline overflow the barrel pushes past the texture on
+ *     each side (+16% at +45).
+ * Bending a panel therefore SLIDES DATA IN rather than just distorting it:
+ * distortion pays for field. (Concave absorbs ~3× more than convex — it is
+ * the "see more" direction.)
+ */
+export function fieldScale(curvature: number): number {
+  const s = Math.abs(curvatureToStrength(curvature))
+  if (s === 0) return 1
+  if (curvature < 0) {
+    const cd = 0.5 * s
+    return 1 / (1 - 2 * (0.5 * (1 + cd) * cd))
+  }
+  const ed = 0.25 * s
+  return 1 + 2 * (0.5 * (1 + ed) * ed)
+}
+
+/**
  * Lens diameter in screen pixels. Fixed so the lens reads as a real
  * "magnifying glass" — same physical size across components and across
  * panel sizes. Sized to match what the Grid felt like under the previous

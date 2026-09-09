@@ -32,6 +32,14 @@ type __VLS_Props = {
      * which matches the existing grid's behaviour under barrel curvature.
      */
     magnify?: boolean;
+    /**
+     * The bend buys field-of-view (default true): the offscreen content canvas
+     * widens by exactly the factor the warp can absorb without cropping, so
+     * bending the panel SLIDES MORE COLUMNS IN instead of just distorting the
+     * same ones (+54% width at −45 concave, +16% at +45 convex). false = the
+     * pre-0.7 behavior (bend is purely visual).
+     */
+    bendField?: boolean;
 };
 declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {}, import("vue").ComponentOptionsMixin, import("vue").ComponentOptionsMixin, {
     "grid-ready": (args_0: {
@@ -77,5 +85,6 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     curvature: number;
     scanlines: boolean;
     magnify: boolean;
+    bendField: boolean;
 }, {}, {}, {}, string, import("vue").ComponentProvideOptions, false, {}, any>;
 export default _default;

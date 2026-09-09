@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 — 2026-09-09
+
+**Bend-field gain — distortion pays for data.** The bend's original promise ("edge
+columns compress so more fits") was never physically true: the content canvas was
+panel-sized, so the warp only distorted the same columns. Now (default on, prop
+`bendField`) the offscreen content canvas widens by exactly the factor the warp can
+absorb without cropping — `fieldScale(curvature)`: the concave fit-rescale k (+54%
+width at −45) or the convex edge overflow (+16% at +45). Bending a panel SLIDES MORE
+COLUMNS IN; columns hidden behind the horizontal scroll surface as the panel bends.
+Concave absorbs ~3× more than convex — it is the "see more" direction.
+
+- `screenToCanvas` gains texW/texH (screen-vs-texture split); hit-testing, hover,
+  resize, filter popups and the overlay all track the widened field.
+- Demo: "Field" checkbox to A/B the gain live.
+- `bendField: false` restores the pre-0.7 purely-visual bend.
+
 ## 0.6.0 — 2026-09-09
 
 **The overlay-surface architecture** — the first step toward canvas-native controls

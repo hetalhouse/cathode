@@ -136,6 +136,7 @@ See [`ROADMAP.md`](https://github.com/hetalhouse/cathode/blob/main/ROADMAP.md) f
 | `paginationPageSize` | `number` | `50` | Rows per page |
 | `theme` | `'none' \| 'phosphor' \| 'amber' \| 'paper'` | `'none'` | Built-in colour theme (`'none'` inherits parent CSS vars) |
 | `curvature` | `number` | `10` | Screen bend, `-45`–`45`: positive = convex (CRT bulge), negative = concave (dish), `0` = flat |
+| `bendField` | `boolean` | `true` | The bend buys field-of-view: the content canvas widens by what the warp absorbs (+54% at −45), so bending slides more columns in |
 | `perspective` | `number` | `1400` | CSS perspective distance (px) — higher = subtler vanishing point |
 | `scanlines` | `boolean` | `true` | Overlay repeating scanline gradient |
 | `glow` | `boolean` | `true` | Apply `text-shadow` phosphor glow to cell text |
