@@ -6,7 +6,7 @@ import { useCathodeLayout, TITLEBAR_H, resetTick } from './useCathodeLayout'
 const props = defineProps<{
   id:         string
   title:      string
-  curvature?: number   // 0–45, same scale as CathodeGrid
+  curvature?: number   // −45–45, same scale as CathodeGrid (positive convex, negative concave)
   canvas?:    boolean  // true when the slot is a canvas-based component (e.g. CathodeGrid)
 }>()
 
@@ -24,7 +24,9 @@ const containerStyle = computed(() => {
   const c    = s.value
   const curv = props.curvature ?? 0
   if (!c) return {}
-  const base = { '--curvature': curv }
+  // --curvature drives intensity-only cosmetics (sheen, corner shading, radius) — use the
+  // magnitude; direction lives in the shader + applyBarrelText (which keeps the sign).
+  const base = { '--curvature': Math.abs(curv) }
   if (c.maximized) {
     return { ...base, left: '0px', top: '0px', width: '100%', height: '100%', zIndex: c.zIndex }
   }

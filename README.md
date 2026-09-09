@@ -131,7 +131,7 @@ See [`ROADMAP.md`](https://github.com/hetalhouse/cathode/blob/main/ROADMAP.md) f
 | `pagination` | `boolean` | `false` | Enable pagination bar |
 | `paginationPageSize` | `number` | `50` | Rows per page |
 | `theme` | `'none' \| 'phosphor' \| 'amber' \| 'paper'` | `'none'` | Built-in colour theme (`'none'` inherits parent CSS vars) |
-| `curvature` | `number` | `10` | Max `rotateY` angle (°) for edge columns — `0` = flat |
+| `curvature` | `number` | `10` | Screen bend, `-45`–`45`: positive = convex (CRT bulge), negative = concave (dish), `0` = flat |
 | `perspective` | `number` | `1400` | CSS perspective distance (px) — higher = subtler vanishing point |
 | `scanlines` | `boolean` | `true` | Overlay repeating scanline gradient |
 | `glow` | `boolean` | `true` | Apply `text-shadow` phosphor glow to cell text |

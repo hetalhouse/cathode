@@ -15,7 +15,7 @@ import {
 import {
   LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
   createLensUniforms, writeLensUniforms, eventToLensUV,
-  LENS_INACTIVE, type MouseLensUV,
+  LENS_INACTIVE, type MouseLensUV, curvatureToStrength,
 } from './lensShader'
 import './cathode.css'
 
@@ -35,8 +35,11 @@ const props = withDefaults(defineProps<{
   /** 'none' inherits parent CSS vars; 'phosphor' | 'amber' | 'paper' are built-in */
   theme?:     'none' | 'phosphor' | 'amber' | 'paper'
   /**
-   * 0–45  barrel-distortion strength.
-   * Higher = more panoramic CRT curve; edge columns compress so more fits.
+   * −45–45  screen-bend strength. Positive = CONVEX (classic CRT bulge —
+   * barrel distortion; edge columns compress so more fits). Negative =
+   * CONCAVE (dish/pincushion — the screen bows away from the viewer; edge
+   * content stretches outward). 0 = flat. Hit-testing tracks the bend in
+   * both directions.
    */
   curvature?: number
   scanlines?: boolean
@@ -522,9 +525,13 @@ const FRAG = `
   varying vec2 vUv;
 
   vec2 barrel(vec2 uv) {
+    // Signed bend: the magnitude curve is computed from |strength| and the
+    // DIRECTION applied afterwards, so concave (negative) mirrors convex
+    // (positive) exactly — the naive signed form (1+dist)*dist caps concave
+    // at ~71% of convex and can never match it.
     vec2  cc   = uv - 0.5;
-    float dist = dot(cc, cc) * uStrength;
-    vec2  d    = cc * (1.0 + dist) * dist;
+    float dist = dot(cc, cc) * abs(uStrength);
+    vec2  d    = cc * (1.0 + dist) * dist * sign(uStrength);
     return uv + d;
   }
 
@@ -692,7 +699,7 @@ function redraw() {
   const themeColors = THEME_COLORS[props.theme] ?? THEME_COLORS['none']
   const isPaper     = props.theme === 'paper'
 
-  material.uniforms.uStrength.value  = (props.curvature / 45) * 0.55
+  material.uniforms.uStrength.value  = curvatureToStrength(props.curvature)
   material.uniforms.uScanlines.value = (props.scanlines && !isPaper) ? 1.0 : 0.0
   material.uniforms.uVignette.value  = isPaper ? 0.0 : 1.0
   ;(material.uniforms.uBezel.value as THREE.Color).set(themeColors.bg)
@@ -742,7 +749,7 @@ function canvasCoords(e: MouseEvent): [number, number] {
   // so resize handles and filter icons drift away from where they're drawn.
   const W        = canvasEl.value.width  || rect.width
   const H        = canvasEl.value.height || rect.height
-  const strength = (props.curvature / 45) * 0.55
+  const strength = curvatureToStrength(props.curvature)
   const [cx, cy] = screenToCanvas(sx, sy, W, H, strength)
   return cx < 0 ? [-1, -1] : [cx, cy]
 }

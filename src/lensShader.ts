@@ -12,6 +12,22 @@
 import * as THREE from 'three'
 
 /**
+ * Map the user-facing `curvature` prop (−45…45) to the shader's barrel-strength
+ * uniform. Positive = CONVEX (classic CRT bulge, barrel distortion); negative =
+ * CONCAVE (dish/pincushion — the screen bows away from the viewer); 0 = flat.
+ *
+ * The shader computes the displacement magnitude from |strength| and applies
+ * the sign afterwards, so −N mirrors +N exactly (the naive signed barrel
+ * caps concave at ~71% of convex — see the barrel() GLSL comment). The map
+ * itself is therefore linear and symmetric. Every component and the
+ * CPU-side hit-testing must use THIS mapping — a drifted copy
+ * desynchronizes the cursor from the pixels (the reason it lives here).
+ */
+export function curvatureToStrength(curvature: number): number {
+  return (curvature / 45) * 0.55
+}
+
+/**
  * Lens diameter in screen pixels. Fixed so the lens reads as a real
  * "magnifying glass" — same physical size across components and across
  * panel sizes. Sized to match what the Grid felt like under the previous

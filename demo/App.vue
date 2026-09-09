@@ -689,7 +689,7 @@ seedLogEntries()
 
       <!-- Shared controls (both tabs) -->
       <label>Curve {{ curvature }}</label>
-      <input type="range" min="0" max="45" step="1" v-model.number="curvature" style="width:110px" />
+      <input type="range" min="-45" max="45" step="1" v-model.number="curvature" style="width:110px" />
       <label><input type="checkbox" v-model="scanlines" /> Scanlines</label>
       <label><input type="checkbox" v-model="glow" />      Glow</label>
       <label>

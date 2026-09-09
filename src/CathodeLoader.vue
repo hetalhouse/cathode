@@ -15,12 +15,13 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import type { CSSProperties } from 'vue'
 import * as THREE from 'three'
+import { curvatureToStrength } from './lensShader'
 import './cathode.css'
 
 const props = withDefaults(defineProps<{
   /** 'none' inherits parent CSS vars; built-ins: phosphor | amber | paper. */
   theme?:     'none' | 'phosphor' | 'amber' | 'paper'
-  /** 0–45 barrel strength, same scale as the other cathode components. */
+  /** −45–45 bend strength (positive convex, negative concave), same scale as the other cathode components. */
   curvature?: number
   scanlines?: boolean
   glow?:      boolean
@@ -88,9 +89,13 @@ const FRAG = `
   varying vec2 vUv;
 
   vec2 barrel(vec2 uv) {
+    // Signed bend: the magnitude curve is computed from |strength| and the
+    // DIRECTION applied afterwards, so concave (negative) mirrors convex
+    // (positive) exactly — the naive signed form (1+dist)*dist caps concave
+    // at ~71% of convex and can never match it.
     vec2  cc   = uv - 0.5;
-    float dist = dot(cc, cc) * uStrength;
-    vec2  d    = cc * (1.0 + dist) * dist;
+    float dist = dot(cc, cc) * abs(uStrength);
+    vec2  d    = cc * (1.0 + dist) * dist * sign(uStrength);
     return uv + d;
   }
 
@@ -209,7 +214,7 @@ function redraw() {
 
   if (!renderer || !material || !texture) return
   const isPaper = props.theme === 'paper'
-  material.uniforms.uStrength.value  = (props.curvature / 45) * 0.55
+  material.uniforms.uStrength.value  = curvatureToStrength(props.curvature)
   material.uniforms.uScanlines.value = (props.scanlines && !isPaper) ? 1.0 : 0.0
   material.uniforms.uVignette.value  = isPaper ? 0.0 : 1.0
   texture.needsUpdate = true

@@ -2,7 +2,7 @@ import './cathode.css';
 type __VLS_Props = {
     /** 'none' inherits parent CSS vars; built-ins: phosphor | amber | paper. */
     theme?: 'none' | 'phosphor' | 'amber' | 'paper';
-    /** 0–45 barrel strength, same scale as the other cathode components. */
+    /** −45–45 bend strength (positive convex, negative concave), same scale as the other cathode components. */
     curvature?: number;
     scanlines?: boolean;
     glow?: boolean;

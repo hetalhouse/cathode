@@ -627,15 +627,20 @@ function hexToRgba(hex: string, alpha: number): string {
 // ── Barrel-distortion hit-testing ─────────────────────────────────────────────
 
 /**
- * Forward barrel formula — same as the GLSL shader.
+ * Forward barrel formula — same as the GLSL shader. `strength` is SIGNED:
+ * positive = convex (barrel), negative = concave (pincushion); the math is
+ * mirrored magnitude (no fold-over within the ±0.55 strength range the
+ * curvatureToStrength mapping produces). Callers must derive strength via
+ * lensShader.curvatureToStrength so CPU hit-testing matches the GPU pixels.
  * UV: x∈[0,1] left→right, y∈[0,1] bottom→top (Three.js convention).
  */
 export function applyBarrel(uvX: number, uvY: number, strength: number): [number, number] {
   const ccX  = uvX - 0.5
   const ccY  = uvY - 0.5
-  const dist = (ccX * ccX + ccY * ccY) * strength
-  const dx   = ccX * (1 + dist) * dist
-  const dy   = ccY * (1 + dist) * dist
+  const sign = strength >= 0 ? 1 : -1
+  const dist = (ccX * ccX + ccY * ccY) * Math.abs(strength)
+  const dx   = ccX * (1 + dist) * dist * sign
+  const dy   = ccY * (1 + dist) * dist * sign
   return [uvX + dx, uvY + dy * 0.15]   // Y attenuated to match shader
 }
 

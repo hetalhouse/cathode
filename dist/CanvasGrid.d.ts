@@ -89,7 +89,11 @@ export type AggFunc = 'sum' | 'avg' | 'min' | 'max' | 'count' | ((v: any[]) => a
 export declare function aggregate(values: any[], fn: AggFunc): any;
 export declare function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void;
 /**
- * Forward barrel formula — same as the GLSL shader.
+ * Forward barrel formula — same as the GLSL shader. `strength` is SIGNED:
+ * positive = convex (barrel), negative = concave (pincushion); the math is
+ * mirrored magnitude (no fold-over within the ±0.55 strength range the
+ * curvatureToStrength mapping produces). Callers must derive strength via
+ * lensShader.curvatureToStrength so CPU hit-testing matches the GPU pixels.
  * UV: x∈[0,1] left→right, y∈[0,1] bottom→top (Three.js convention).
  */
 export declare function applyBarrel(uvX: number, uvY: number, strength: number): [number, number];

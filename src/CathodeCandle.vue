@@ -11,7 +11,7 @@ import {
 import {
   LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
   createLensUniforms, writeLensUniforms, eventToLensUV,
-  LENS_INACTIVE, type MouseLensUV,
+  LENS_INACTIVE, type MouseLensUV, curvatureToStrength,
 } from './lensShader'
 import './cathode.css'
 
@@ -145,9 +145,13 @@ const FRAG = `
   varying vec2 vUv;
 
   vec2 barrel(vec2 uv) {
+    // Signed bend: the magnitude curve is computed from |strength| and the
+    // DIRECTION applied afterwards, so concave (negative) mirrors convex
+    // (positive) exactly — the naive signed form (1+dist)*dist caps concave
+    // at ~71% of convex and can never match it.
     vec2  cc   = uv - 0.5;
-    float dist = dot(cc, cc) * uStrength;
-    vec2  d    = cc * (1.0 + dist) * dist;
+    float dist = dot(cc, cc) * abs(uStrength);
+    vec2  d    = cc * (1.0 + dist) * dist * sign(uStrength);
     return uv + d;
   }
 
@@ -314,7 +318,7 @@ function redraw() {
 
   const isPaper = props.theme === 'paper'
 
-  material.uniforms.uStrength.value  = (props.curvature / 45) * 0.55
+  material.uniforms.uStrength.value  = curvatureToStrength(props.curvature)
   material.uniforms.uScanlines.value = (props.scanlines && !isPaper) ? 1.0 : 0.0
   material.uniforms.uVignette.value  = isPaper ? 0.0 : 1.0
   writeLensUniforms(material, props.magnify, mouseLensUV, offCanvas.width, offCanvas.height)

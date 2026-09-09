@@ -16,8 +16,11 @@ type __VLS_Props = {
     /** 'none' inherits parent CSS vars; 'phosphor' | 'amber' | 'paper' are built-in */
     theme?: 'none' | 'phosphor' | 'amber' | 'paper';
     /**
-     * 0–45  barrel-distortion strength.
-     * Higher = more panoramic CRT curve; edge columns compress so more fits.
+     * −45–45  screen-bend strength. Positive = CONVEX (classic CRT bulge —
+     * barrel distortion; edge columns compress so more fits). Negative =
+     * CONCAVE (dish/pincushion — the screen bows away from the viewer; edge
+     * content stretches outward). 0 = flat. Hit-testing tracks the bend in
+     * both directions.
      */
     curvature?: number;
     scanlines?: boolean;
