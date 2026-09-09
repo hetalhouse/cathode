@@ -639,8 +639,15 @@ export function applyBarrel(uvX: number, uvY: number, strength: number): [number
   const ccY  = uvY - 0.5
   const sign = strength >= 0 ? 1 : -1
   const dist = (ccX * ccX + ccY * ccY) * Math.abs(strength)
-  const dx   = ccX * (1 + dist) * dist * sign
-  const dy   = ccY * (1 + dist) * dist * sign
+  let dx     = ccX * (1 + dist) * dist * sign
+  let dy     = ccY * (1 + dist) * dist * sign
+  if (strength < 0) {
+    // concave: border-pinned (see the GLSL barrel() comment) — headers and
+    // edge columns never leave the screen; the dish bows the interior only.
+    const pin = (1 - 4 * ccX * ccX) * (1 - 4 * ccY * ccY)
+    dx *= pin
+    dy *= pin
+  }
   return [uvX + dx, uvY + dy * 0.15]   // Y attenuated to match shader
 }
 

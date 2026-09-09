@@ -17,14 +17,16 @@ import * as THREE from 'three'
  * CONCAVE (dish/pincushion — the screen bows away from the viewer); 0 = flat.
  *
  * The shader computes the displacement magnitude from |strength| and applies
- * the sign afterwards, so −N mirrors +N exactly (the naive signed barrel
- * caps concave at ~71% of convex — see the barrel() GLSL comment). The map
- * itself is therefore linear and symmetric. Every component and the
- * CPU-side hit-testing must use THIS mapping — a drifted copy
- * desynchronizes the cursor from the pixels (the reason it lives here).
+ * the sign afterwards. The concave branch is BORDER-PINNED (displacement
+ * fades to zero at the rect edge so headers/edge columns never leave the
+ * screen — see the barrel() GLSL comment), which damps the interior bow;
+ * the negative branch is scaled up to compensate so −N reads as bent as +N.
+ * Over-strength cannot crop content on the concave side by construction.
+ * Every component and the CPU-side hit-testing must use THIS mapping — a
+ * drifted copy desynchronizes the cursor from the pixels.
  */
 export function curvatureToStrength(curvature: number): number {
-  return (curvature / 45) * 0.55
+  return (curvature / 45) * (curvature >= 0 ? 0.55 : 1.4)
 }
 
 /**

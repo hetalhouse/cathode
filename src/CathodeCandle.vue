@@ -145,13 +145,19 @@ const FRAG = `
   varying vec2 vUv;
 
   vec2 barrel(vec2 uv) {
-    // Signed bend: the magnitude curve is computed from |strength| and the
-    // DIRECTION applied afterwards, so concave (negative) mirrors convex
-    // (positive) exactly — the naive signed form (1+dist)*dist caps concave
-    // at ~71% of convex and can never match it.
+    // Signed bend: magnitude from |strength|, direction applied after.
+    // CONVEX (+): classic barrel — corners sample past the texture → bezel.
+    // CONCAVE (−): inward sampling would push edge content (headers, first/
+    // last columns) off-screen entirely, so the displacement is faded to zero
+    // at the rectangle border: the FRAME stays pinned and the glass dishes
+    // inward — no content is ever lost, the bow reads through interior rows.
+    // (Physically truer to a tube, too: the bezel doesn't move.)
     vec2  cc   = uv - 0.5;
     float dist = dot(cc, cc) * abs(uStrength);
     vec2  d    = cc * (1.0 + dist) * dist * sign(uStrength);
+    if (uStrength < 0.0) {
+      d *= (1.0 - 4.0 * cc.x * cc.x) * (1.0 - 4.0 * cc.y * cc.y);
+    }
     return uv + d;
   }
 

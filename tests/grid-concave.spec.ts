@@ -7,11 +7,12 @@ import { curvatureToStrength } from '../src/lensShader';
  * Concave bending (negative curvature). The barrel pipeline is signed:
  * positive = convex (classic CRT bulge), negative = concave (pincushion).
  * Guards three things:
- *   1. the shared curvature→strength mapping (linear, symmetric — the
- *      shader mirrors magnitude across the sign, so −45 bends as far as +45)
- *   2. CPU hit-testing stays coherent with the GPU pixels at negative
- *      strength (clicks land on cells; no bezel false-positives — concave
- *      never pushes UVs out of range, so there IS no bezel)
+ *   1. the shared curvature→strength mapping (concave branch boosted — the
+ *      border-pinning damps interior bow, so −45 needs more raw strength)
+ *   2. concave is BORDER-PINNED: headers / edge columns can never leave the
+ *      screen (the 0.5.0 mapping pushed edge content off-display at high
+ *      strength — the header-vanishing bug), and CPU hit-testing stays
+ *      coherent with the GPU pixels (no bezel false-positives)
  *   3. the shader visibly renders three distinct states (convex / flat /
  *      concave) rather than silently clamping negatives
  */
@@ -24,30 +25,40 @@ test.describe('curvatureToStrength + signed barrel math', () => {
   test('mapping: endpoints, sign, and flatness', () => {
     expect(curvatureToStrength(0)).toBe(0);
     expect(curvatureToStrength(45)).toBeCloseTo(0.55, 10);
-    expect(curvatureToStrength(-45)).toBeCloseTo(-0.55, 10);
+    expect(curvatureToStrength(-45)).toBeCloseTo(-1.4, 10);
     expect(curvatureToStrength(20)).toBeGreaterThan(0);
     expect(curvatureToStrength(-20)).toBeLessThan(0);
   });
 
-  test('concave mirrors convex: corner displacement magnitudes equal', () => {
-    // The shader computes magnitude from |strength| and applies sign after,
-    // so −45 must displace the corner exactly as far as +45 (inward).
-    const conv = applyBarrel(1, 1, curvatureToStrength(45));
-    const conc = applyBarrel(1, 1, curvatureToStrength(-45));
-    const dConv = Math.hypot(conv[0] - 1, conv[1] - 1);
-    const dConc = Math.hypot(conc[0] - 1, conc[1] - 1);
-    expect(dConc).toBeCloseTo(dConv, 10);
+  test('concave is border-pinned: edges never move, interior bows', () => {
+    const s = curvatureToStrength(-45);
+    // Border pinned exactly — headers (top edge), first/last columns, corners:
+    for (const [x, y] of [[0.5, 1], [0.5, 0], [0, 0.5], [1, 0.5], [1, 1], [0, 0]] as const) {
+      const [bx, by] = applyBarrel(x, y, s);
+      expect(bx, `x pinned at ${x},${y}`).toBeCloseTo(x, 10);
+      expect(by, `y pinned at ${x},${y}`).toBeCloseTo(y, 10);
+    }
+    // Interior genuinely bows inward (the dish):
+    const [ix, iy] = applyBarrel(0.25, 0.25, s);
+    expect(ix).toBeGreaterThan(0.25 + 0.005);
+    expect(iy).toBeGreaterThan(0.25 + 0.0005); // Y attenuated ×0.15 in the CPU mirror
   });
 
-  test('concave pulls inward, convex pushes outward, no fold-over', () => {
+  test('concave stays in range, convex pushes outward, no fold-over', () => {
     const s = curvatureToStrength(-45);
-    // corner: convex leaves [0,1] (bezel), concave stays inside (no bezel)
+    // corner: convex leaves [0,1] (bezel); concave corner is pinned (no bezel)
     const [cx] = applyBarrel(1, 1, curvatureToStrength(45));
-    const [kx, ky] = applyBarrel(1, 1, s);
     expect(cx).toBeGreaterThan(1);
-    expect(kx).toBeLessThan(1);
-    expect(kx).toBeGreaterThan(0.5); // no fold past center
-    expect(ky).toBeGreaterThan(0.5);
+    // dense sweep: concave samples never leave [0,1] and never fold past center
+    for (let x = 0; x <= 1.001; x += 0.05) for (let y = 0; y <= 1.001; y += 0.05) {
+      const [bx, by] = applyBarrel(x, y, s);
+      expect(bx).toBeGreaterThanOrEqual(-1e-9);
+      expect(bx).toBeLessThanOrEqual(1 + 1e-9);
+      expect(by).toBeGreaterThanOrEqual(-1e-9);
+      expect(by).toBeLessThanOrEqual(1 + 1e-9);
+      if (x > 0.5) expect(bx).toBeGreaterThan(0.5);
+      if (x < 0.5) expect(bx).toBeLessThan(0.5);
+    }
     // screenToCanvas: concave must NEVER report the bezel region
     for (const [sx, sy] of [[0, 0], [799, 0], [0, 599], [799, 599], [400, 300]] as const) {
       const [mx] = screenToCanvas(sx, sy, 800, 600, s);
