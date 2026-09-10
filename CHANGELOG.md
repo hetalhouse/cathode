@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0 — 2026-09-10
+
+**CathodeCandleGrid — the chart wall.** N mini candle charts in ONE WebGL context:
+each cell renders through the existing 2D pipeline (`drawCandle`) into a plain-2D
+offscreen, the cells composite into one page canvas, and a single barrel shader warps
+the whole wall as a sheet. Kills the ~16-WebGL-context cap that forced dashboards to
+mount mini charts flat — and with bend-field, bending the wall slides MORE CELLS into
+view. Cells carry title/badge/note/open-state chrome drawn in-canvas; clicks
+inverse-map through the barrel to `cell-click(id)`; wheel scrolls overflow rows;
+magnify lens works at the sheet level. Demo: new WALL tab (16 charts, one context).
+
 ## 0.7.0 — 2026-09-09
 
 **Bend-field gain — distortion pays for data.** The bend's original promise ("edge

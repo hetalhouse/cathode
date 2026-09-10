@@ -137,6 +137,8 @@ See [`ROADMAP.md`](https://github.com/hetalhouse/cathode/blob/main/ROADMAP.md) f
 | `theme` | `'none' \| 'phosphor' \| 'amber' \| 'paper'` | `'none'` | Built-in colour theme (`'none'` inherits parent CSS vars) |
 | `curvature` | `number` | `10` | Screen bend, `-45`–`45`: positive = convex (CRT bulge), negative = concave (dish), `0` = flat |
 | `bendField` | `boolean` | `true` | The bend buys field-of-view: the content canvas widens by what the warp absorbs (+54% at −45), so bending slides more columns in |
+
+Also in the family: **`CathodeCandleGrid`** — a wall of N mini candle charts rendered in ONE WebGL context (cells composite into a single warped sheet; `cell-click` routes through the barrel inverse; bend-field slides more cells in as the wall bends). See the demo's WALL tab.
 | `perspective` | `number` | `1400` | CSS perspective distance (px) — higher = subtler vanishing point |
 | `scanlines` | `boolean` | `true` | Overlay repeating scanline gradient |
 | `glow` | `boolean` | `true` | Apply `text-shadow` phosphor glow to cell text |

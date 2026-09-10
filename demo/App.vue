@@ -7,6 +7,7 @@ import CathodeTerminal   from '../src/CathodeTerminal.vue'
 import CathodeWorkspace from '../src/CathodeWorkspace.vue'
 import CathodeContainer from '../src/CathodeContainer.vue'
 import CathodeLoader    from '../src/CathodeLoader.vue'
+import CathodeCandleGrid from '../src/CathodeCandleGrid.vue'
 import { buildDefaultLayout } from '../src/useCathodeLayout'
 import type { ColDef, GridApi } from '../src/types'
 import type { ContainerState } from '../src/useCathodeLayout'
@@ -14,7 +15,7 @@ import type { LogEntry } from '../src/CanvasLog'
 import type { OHLCVCandle, PriceOverlay, TradeMarker } from '../src/CanvasCandle'
 
 // ── Shared state ──────────────────────────────────────────────────────────────
-type DemoTab = 'grid' | 'workspace' | 'log' | 'candle' | 'terminal'
+type DemoTab = 'grid' | 'workspace' | 'log' | 'candle' | 'wall' | 'terminal'
 const activeTab = ref<DemoTab>('workspace')
 
 type Theme = 'none' | 'phosphor' | 'amber' | 'paper'
@@ -476,6 +477,20 @@ function onTerminalSubmit(cmd: string) {
 
 // ── Candle tab — sample OHLCV candles ──────────────────────────────────────────
 // Synthetic random walk with gentle drift; large enough to test horizontal scroll.
+const WALL_SYMBOLS = ['BTC','ETH','SOL','ARB','UNI','DASH','ZEC','AVAX','DOGE','LINK','TAO','NEAR','SPY','QQQ','NVDA','TSLA']
+const wallCells = WALL_SYMBOLS.map((t, i) => {
+  const candles = generateOHLCV(90 + (i * 7) % 60)
+  const pct = ((candles[candles.length - 1].close / candles[0].close) - 1) * 100
+  return {
+    id: t, title: t,
+    badge: i >= 12 ? 'EQ' : '\u20BF',
+    note: `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`,
+    noteColor: pct >= 0 ? '#00bc8c' : '#e74c3c',
+    open: i % 5 === 0,
+    candles,
+  }
+})
+
 function generateOHLCV(n: number): OHLCVCandle[] {
   const out: OHLCVCandle[] = []
   let price = 60000
@@ -671,6 +686,9 @@ seedLogEntries()
         <button :class="['tab-btn', { active: activeTab === 'log' }]" @click="activeTab = 'log'">
           Log
         </button>
+        <button :class="['tab-btn', { active: activeTab === 'wall' }]" @click="activeTab = 'wall'">
+          WALL
+        </button>
         <button :class="['tab-btn', { active: activeTab === 'candle' }]" @click="activeTab = 'candle'">
           Candle
         </button>
@@ -791,6 +809,20 @@ seedLogEntries()
         :flat="flat"
         :compact="compact"
         :magnify="magnify"
+      />
+    </div>
+
+    <!-- ── Wall tab — N mini charts, ONE WebGL context, bending as a sheet ─── -->
+    <div v-show="activeTab === 'wall'" class="tab-content">
+      <CathodeCandleGrid
+        :cells="wallCells"
+        :theme="theme"
+        :curvature="curvature"
+        :scanlines="scanlines"
+        :glow="glow"
+        :magnify="magnify"
+        :bend-field="bendField"
+        @cell-click="(id: string) => console.log('wall cell:', id)"
       />
     </div>
 
