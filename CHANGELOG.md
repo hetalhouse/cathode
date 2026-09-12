@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2 — 2026-09-12
+- Narrow-cell pill suppression actually suppresses: hline labels default to the
+  PRICE tag when label is undefined — the wall now passes label: '' (the one
+  value drawHLine treats as "no pill").
+
 ## 0.8.1 — 2026-09-12
 - Wall cells clip + ellipsize their headers (long titles — e.g. prediction-market
   questions — bled across neighboring cells) and drop overlay label pills below

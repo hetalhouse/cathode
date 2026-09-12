@@ -255,7 +255,7 @@ function cellCanvas(cell: WallCell, w: number, h: number): HTMLCanvasElement {
   // Narrow cells: keep overlay LINES but drop their label pills — at mini sizes the
   // pills stack over the price axis and each other (the predmkt-wall clutter).
   const overlays = w < 260 && cell.overlays
-    ? cell.overlays.map((o: any) => (o.label ? { ...o, label: undefined } : o))
+    ? cell.overlays.map((o: any) => ({ ...o, label: '' })) // '' suppresses the pill; undefined falls back to the price tag
     : cell.overlays
   drawCandle(canvas, {
     candles: cell.candles,
