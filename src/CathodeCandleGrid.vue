@@ -252,6 +252,11 @@ function cellCanvas(cell: WallCell, w: number, h: number): HTMLCanvasElement {
   canvas.height = h
   // Fit the whole series into the cell: shrink slotW until it fits, then right-align.
   const fitSlotW = Math.max(1.5, Math.min(props.slotW, w / Math.max(1, cell.candles.length)))
+  // Narrow cells: keep overlay LINES but drop their label pills — at mini sizes the
+  // pills stack over the price axis and each other (the predmkt-wall clutter).
+  const overlays = w < 260 && cell.overlays
+    ? cell.overlays.map((o: any) => (o.label ? { ...o, label: undefined } : o))
+    : cell.overlays
   drawCandle(canvas, {
     candles: cell.candles,
     slotW: fitSlotW,
@@ -261,7 +266,7 @@ function cellCanvas(cell: WallCell, w: number, h: number): HTMLCanvasElement {
     showVolume: props.showVolume,
     volumeFraction: props.volumeFraction,
     hover: null,
-    overlays: cell.overlays,
+    overlays,
     compact: true,
     colors: props.colors,
   })
@@ -292,22 +297,37 @@ function redraw() {
     ctx.strokeStyle = cell.open ? c.candleBull : c.gridline
     ctx.lineWidth = i === hoveredCell.value ? 2 : 1
     ctx.strokeRect(inX + 0.5, r.y + 0.5, inW - 1, r.h - PAD - 1)
-    // header
+    // header — clipped to the cell; the title ellipsizes into the space the
+    // badge + note leave (predmkt questions are sentences, not tickers).
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(inX, r.y, inW, HEADER_H)
+    ctx.clip()
+    const ty = r.y + HEADER_H / 2 + 1
+    const noteW = cell.note ? ctx.measureText(cell.note).width + (cell.open ? 22 : 12) : (cell.open ? 16 : 0)
+    const badgeW = cell.badge ? ctx.measureText(cell.badge).width + 6 : 0
+    const titleMax = inW - 14 - badgeW - noteW
+    let title = cell.title
+    if (ctx.measureText(title).width > titleMax) {
+      while (title.length > 1 && ctx.measureText(title + '…').width > titleMax) title = title.slice(0, -1)
+      title += '…'
+    }
     let tx = inX + 7
     ctx.fillStyle = c.text
     ctx.textAlign = 'left'
-    ctx.fillText(cell.title, tx, r.y + HEADER_H / 2 + 1)
-    tx += ctx.measureText(cell.title).width + 6
+    ctx.fillText(title, tx, ty)
+    tx += ctx.measureText(title).width + 6
     if (cell.badge) {
       ctx.fillStyle = c.accent
-      ctx.fillText(cell.badge, tx, r.y + HEADER_H / 2 + 1)
+      ctx.fillText(cell.badge, tx, ty)
     }
     if (cell.note) {
       ctx.textAlign = 'right'
       ctx.fillStyle = cell.noteColor || c.accent
-      ctx.fillText(cell.note, inX + inW - (cell.open ? 16 : 7), r.y + HEADER_H / 2 + 1)
+      ctx.fillText(cell.note, inX + inW - (cell.open ? 16 : 7), ty)
       ctx.textAlign = 'left'
     }
+    ctx.restore()
     if (cell.open) {
       ctx.fillStyle = c.candleBull
       ctx.beginPath()

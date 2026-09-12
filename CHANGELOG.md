@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1 — 2026-09-12
+- Wall cells clip + ellipsize their headers (long titles — e.g. prediction-market
+  questions — bled across neighboring cells) and drop overlay label pills below
+  260px cell width (lines stay; the pills stacked into clutter at mini sizes).
+
 ## 0.8.0 — 2026-09-10
 
 **CathodeCandleGrid — the chart wall.** N mini candle charts in ONE WebGL context:
