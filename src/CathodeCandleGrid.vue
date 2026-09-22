@@ -86,6 +86,9 @@ const HEADER_H = 22
 const PAD      = 6
 
 // ── Three.js (one context for the whole wall) ────────────────────────────────
+// Device-pixel ratio (capped at 2 — beyond that the memory cost outweighs the gain). Re-read on
+// resize so dragging to a different-DPR monitor stays crisp. Drives the whole 2D→texture→WebGL chain.
+let dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2)
 let renderer: THREE.WebGLRenderer | null = null
 let webglFailed = false
 function releaseRenderer() {
@@ -170,7 +173,7 @@ function initThree() {
   } catch { webglFailed = true }
   if (!webglFailed && !renderer!.getContext()) { renderer!.dispose(); renderer = null; webglFailed = true }
   if (webglFailed) { sizeToContainer(); return }
-  renderer!.setPixelRatio(1)
+  renderer!.setPixelRatio(dpr)
   renderer!.setClearColor(0x000000, 0)
   scene = new THREE.Scene()
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
@@ -197,10 +200,13 @@ function sizeToContainer() {
   if (!W || !H) return
   screenW.value = W
   screenH.value = H
+  dpr = Math.min(window.devicePixelRatio || 1, 2) // re-read (monitor may have changed)
   const contentW = props.bendField ? Math.round(W * fieldScale(props.curvature)) : W
-  const sizeChanged = offCanvas.width !== contentW || offCanvas.height !== H
-  offCanvas.width = contentW
-  offCanvas.height = H
+  // Backing store at physical resolution (× dpr); the composite/cells draw in logical coords scaled up.
+  const bw = Math.round(contentW * dpr), bh = Math.round(H * dpr)
+  const sizeChanged = offCanvas.width !== bw || offCanvas.height !== bh
+  offCanvas.width = bw
+  offCanvas.height = bh
   if (renderer) {
     if (sizeChanged && texture) {
       texture.dispose()
@@ -209,10 +215,11 @@ function sizeToContainer() {
       texture.magFilter = THREE.LinearFilter
       material.uniforms.uTex.value = texture
     }
-    renderer.setSize(W, H)
+    renderer.setPixelRatio(dpr)
+    renderer.setSize(W, H) // three multiplies by pixelRatio → backing buffer W·dpr × H·dpr
   } else if (canvasEl.value) {
-    canvasEl.value.width = W
-    canvasEl.value.height = H
+    canvasEl.value.width = Math.round(W * dpr)
+    canvasEl.value.height = Math.round(H * dpr)
     canvasEl.value.style.width = W + 'px'
     canvasEl.value.style.height = H + 'px'
   }
@@ -244,12 +251,13 @@ const maxScrollY = () => {
 const cellCanvases = new Map<string, { canvas: HTMLCanvasElement; key: string }>()
 function cellCanvas(cell: WallCell, w: number, h: number): HTMLCanvasElement {
   const last = cell.candles[cell.candles.length - 1]
-  const key = `${w}x${h}|${cell.candles.length}|${last ? last.start + ':' + last.close : 0}|${props.theme}|${props.glow}|${props.showVolume}|${props.slotW}`
+  const key = `${w}x${h}@${dpr}|${cell.candles.length}|${last ? last.start + ':' + last.close : 0}|${props.theme}|${props.glow}|${props.showVolume}|${props.slotW}`
   const hit = cellCanvases.get(cell.id)
   if (hit && hit.key === key) return hit.canvas
   const canvas = hit?.canvas ?? document.createElement('canvas')
-  canvas.width = w
-  canvas.height = h
+  // Physical backing store = logical × dpr; drawCandle(dpr) draws in logical coords at retina res.
+  canvas.width = Math.round(w * dpr)
+  canvas.height = Math.round(h * dpr)
   // Fit the whole series into the cell: shrink slotW until it fits, then right-align.
   const fitSlotW = Math.max(1.5, Math.min(props.slotW, w / Math.max(1, cell.candles.length)))
   // Narrow cells: keep overlay LINES but drop their label pills — at mini sizes the
@@ -269,6 +277,7 @@ function cellCanvas(cell: WallCell, w: number, h: number): HTMLCanvasElement {
     overlays,
     compact: true,
     colors: props.colors,
+    dpr,
   })
   cellCanvases.set(cell.id, { canvas, key })
   return canvas
@@ -282,8 +291,10 @@ function redraw() {
   const ctx = offCanvas.getContext('2d')
   if (!ctx) return
   const c = themeC.value
+  ctx.setTransform(1, 0, 0, 1, 0, 0) // clear/fill in physical px…
   ctx.clearRect(0, 0, offCanvas.width, offCanvas.height)
   if (c.bg && c.bg !== 'rgba(0,0,0,0)') { ctx.fillStyle = c.bg; ctx.fillRect(0, 0, offCanvas.width, offCanvas.height) }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // …then draw the wall in LOGICAL coords at physical resolution
 
   const { rects } = layout()
   ctx.font = '600 11px ui-monospace, SFMono-Regular, monospace'
@@ -291,7 +302,7 @@ function redraw() {
   for (let i = 0; i < props.cells.length; i++) {
     const cell = props.cells[i]
     const r = rects[i]
-    if (r.y + r.h < 0 || r.y > offCanvas.height) continue // off-screen row
+    if (r.y + r.h < 0 || r.y > offCanvas.height / dpr) continue // off-screen row (rects are logical)
     const inX = r.x + PAD / 2, inW = r.w - PAD
     // frame — accent when open, hover ring on top
     ctx.strokeStyle = cell.open ? c.candleBull : c.gridline
@@ -338,7 +349,9 @@ function redraw() {
     const chartY = r.y + HEADER_H
     const chartH = r.h - HEADER_H - PAD
     if (cell.candles.length) {
-      ctx.drawImage(cellCanvas(cell, inW - 2, chartH - 1), inX + 1, chartY)
+      // cell offscreen is dpr-scaled (physical (inW-2)·dpr × …); draw it at LOGICAL dest size so it
+      // lands 1:1 with the composite's dpr scale — crisp, no re-blur.
+      ctx.drawImage(cellCanvas(cell, inW - 2, chartH - 1), inX + 1, chartY, inW - 2, chartH - 1)
     } else {
       ctx.fillStyle = c.accent
       ctx.textAlign = 'center'
@@ -369,7 +382,8 @@ function canvasCoords(e: MouseEvent): [number, number] {
     e.clientX - rect.left, e.clientY - rect.top,
     rect.width, rect.height,
     curvatureToStrength(props.curvature),
-    offCanvas?.width || rect.width, offCanvas?.height || rect.height,
+    // texture dims in LOGICAL px (offCanvas backing store is now × dpr) so results match the layout rects
+    (offCanvas?.width || rect.width) / dpr, (offCanvas?.height || rect.height) / dpr,
   )
 }
 function cellAt(cx: number, cy: number): number {

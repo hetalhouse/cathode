@@ -368,6 +368,12 @@ export interface DrawCandleOpts {
    * consumer match its own brand palette without registering a new theme.
    */
   colors?:        Partial<CandleColors>
+  /**
+   * Device-pixel ratio. When > 1, the canvas backing store is expected to be
+   * `logicalSize × dpr`; drawing then happens in LOGICAL coordinates but renders
+   * at physical resolution (crisp candles/lines/text on retina). Default 1.
+   */
+  dpr?:           number
 }
 
 /** Format a price as a financial number — thousands separators, decimal scale
@@ -414,8 +420,12 @@ export function drawCandle(canvas: HTMLCanvasElement, opts: DrawCandleOpts): voi
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  const W = canvas.width
-  const H = canvas.height
+  // Retina: the backing store is logical × dpr; draw in LOGICAL coords at physical resolution so
+  // 1px wicks/lines and text stay crisp. All the layout math below stays in logical units unchanged.
+  const dpr = opts.dpr && opts.dpr > 0 ? opts.dpr : 1
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const W = canvas.width / dpr
+  const H = canvas.height / dpr
   const baseTheme = CANDLE_THEME_COLORS[opts.theme] ?? CANDLE_THEME_COLORS['none']
   const c: CandleColors = opts.colors ? { ...baseTheme, ...opts.colors } : baseTheme
   const compact = !!opts.compact

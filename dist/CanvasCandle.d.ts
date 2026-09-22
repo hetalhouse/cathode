@@ -195,5 +195,11 @@ export interface DrawCandleOpts {
      * consumer match its own brand palette without registering a new theme.
      */
     colors?: Partial<CandleColors>;
+    /**
+     * Device-pixel ratio. When > 1, the canvas backing store is expected to be
+     * `logicalSize × dpr`; drawing then happens in LOGICAL coordinates but renders
+     * at physical resolution (crisp candles/lines/text on retina). Default 1.
+     */
+    dpr?: number;
 }
 export declare function drawCandle(canvas: HTMLCanvasElement, opts: DrawCandleOpts): void;
