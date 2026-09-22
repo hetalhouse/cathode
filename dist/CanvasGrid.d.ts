@@ -44,6 +44,12 @@ export interface DrawGridOpts {
     pinnedRows: any[];
     rowHeight: number;
     /**
+     * Device-pixel ratio. When > 1, the canvas backing store is `logicalSize × dpr`;
+     * the grid then draws in LOGICAL coordinates but renders at physical resolution
+     * (crisp gridlines, borders, and text on retina). Default 1.
+     */
+    dpr?: number;
+    /**
      * Optional per-row heights (parallel to `rows`) for variable-height rows —
      * supplied only when a column has `wrap: true`. When omitted, every data row
      * is `rowHeight` tall (the original uniform behaviour, byte-identical). Pinned
