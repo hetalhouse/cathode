@@ -131,6 +131,12 @@ export interface DrawGridOpts {
   pinnedRows:   any[]
   rowHeight:    number
   /**
+   * Device-pixel ratio. When > 1, the canvas backing store is `logicalSize × dpr`;
+   * the grid then draws in LOGICAL coordinates but renders at physical resolution
+   * (crisp gridlines, borders, and text on retina). Default 1.
+   */
+  dpr?:         number
+  /**
    * Optional per-row heights (parallel to `rows`) for variable-height rows —
    * supplied only when a column has `wrap: true`. When omitted, every data row
    * is `rowHeight` tall (the original uniform behaviour, byte-identical). Pinned
@@ -205,8 +211,12 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  const W = canvas.width
-  const H = canvas.height
+  // Retina: backing store is logical × dpr; draw in LOGICAL coords at physical resolution so 1px
+  // gridlines/borders and text stay crisp. All the layout math below is unchanged (logical units).
+  const dpr = opts.dpr && opts.dpr > 0 ? opts.dpr : 1
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const W = canvas.width / dpr
+  const H = canvas.height / dpr
   const c = THEME_COLORS[opts.theme] ?? THEME_COLORS['none']
   const { cols, rows, pinnedRows, rowHeight, scrollY, scrollX, glow } = opts
 

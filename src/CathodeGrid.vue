@@ -519,6 +519,9 @@ watch(resetTick, () => scheduleResize())
 
 // ── Three.js ───────────────────────────────────────────────────────────────────
 
+// Device-pixel ratio (capped at 2). Re-read on resize. Drives the 2D→texture→WebGL chain so the
+// grid's gridlines/borders/text are crisp on retina (the composite texture, not just the display).
+let dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2)
 let renderer:    THREE.WebGLRenderer | null = null
 let webglFailed  = false   // true when GPU/sandbox prevents WebGL
 
@@ -678,9 +681,12 @@ function sizeToContainer() {
   // the driver throws GL_INVALID_VALUE: 'Offset overflows texture dimensions',
   // producing garbled pixel output. Dispose the texture so Three.js
   // reallocates GPU storage on the next render.
-  const sizeChanged = offCanvas.width !== contentW || offCanvas.height !== H
-  offCanvas.width  = contentW
-  offCanvas.height = H
+  dpr = Math.min(window.devicePixelRatio || 1, 2) // re-read (monitor may have changed)
+  // Backing store at physical resolution (× dpr); canvasW/canvasH stay LOGICAL (layout/scroll/hit-test).
+  const bw = Math.round(contentW * dpr), bh = Math.round(H * dpr)
+  const sizeChanged = offCanvas.width !== bw || offCanvas.height !== bh
+  offCanvas.width  = bw
+  offCanvas.height = bh
   canvasW.value    = contentW
   canvasH.value    = H
   scrollX.value    = Math.max(0, Math.min(maxScrollX.value, scrollX.value))
@@ -696,13 +702,13 @@ function sizeToContainer() {
       if (material) material.uniforms.uTex.value = texture
     }
     // Track DPR so zooming the browser page keeps the canvas crisp.
-    renderer.setPixelRatio(window.devicePixelRatio || 1)
+    renderer.setPixelRatio(dpr)
     // Update the WebGL pixel buffer AND the canvas CSS size together.
     renderer.setSize(W, H)
   } else if (canvasEl.value) {
-    // WebGL fallback: size the canvas element directly
-    canvasEl.value.width  = W
-    canvasEl.value.height = H
+    // WebGL fallback: size the canvas element directly (× dpr for crispness)
+    canvasEl.value.width  = Math.round(W * dpr)
+    canvasEl.value.height = Math.round(H * dpr)
     canvasEl.value.style.width  = W + 'px'
     canvasEl.value.style.height = H + 'px'
   }
@@ -738,6 +744,7 @@ function redraw() {
       selectionAnchorCol: selectionAnchor.value?.col ?? -1,
       formatCell,
       getCellStyle,
+      dpr,
     })
     drawPopupOverlay()
     const ctx2d = canvasEl.value.getContext('2d')
@@ -781,6 +788,7 @@ function redraw() {
     formatCell,
     getCellStyle,
     aggregateRow: aggregateRow.value,
+    dpr,
   })
 
   drawPopupOverlay()
@@ -793,7 +801,8 @@ function drawPopupOverlay() {
   if (!activeFilter.value || !offCanvas?.width) return
   const ctx = offCanvas.getContext('2d')
   if (!ctx) return
-  filterLayout = layoutFilterPopup(offCanvas.width, filterAnchorX.value, !!filterPopupValue.value)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // draw the popup in LOGICAL coords at physical res (rides the warp)
+  filterLayout = layoutFilterPopup(offCanvas.width / dpr, filterAnchorX.value, !!filterPopupValue.value)
   const colors = THEME_COLORS[props.theme] ?? THEME_COLORS['none']
   drawFilterPopup(ctx, filterLayout, filterPopupValue.value, caretOn.value, colors)
 }
@@ -813,7 +822,8 @@ function canvasXYAt(clientX: number, clientY: number): [number, number] {
   const W        = rect.width
   const H        = rect.height
   const strength = curvatureToStrength(props.curvature)
-  const [cx, cy] = screenToCanvas(sx, sy, W, H, strength, offCanvas.width || W, offCanvas.height || H)
+  // texture dims in LOGICAL px (offCanvas backing store is now × dpr) so results match layout coords
+  const [cx, cy] = screenToCanvas(sx, sy, W, H, strength, (offCanvas.width / dpr) || W, (offCanvas.height / dpr) || H)
   return cx < 0 ? [-1, -1] : [cx, cy]
 }
 function canvasCoords(e: MouseEvent): [number, number] {
@@ -893,7 +903,7 @@ function onCanvasMouseMove(e: MouseEvent) {
   const hit = hitTest(
     cx, cy, displayCols.value,
     filteredRows.value.length, props.rowHeight,
-    scrollY.value, offCanvas.height, localPinned.value.length, scrollX.value,
+    scrollY.value, canvasH.value, localPinned.value.length, scrollX.value,
     aggregateRow.value !== null,
     rowHeights.value ?? undefined,
   )
@@ -971,7 +981,7 @@ function onCanvasClick(e: MouseEvent) {
   const hit = hitTest(
     cx, cy, displayCols.value,
     filteredRows.value.length, props.rowHeight,
-    scrollY.value, offCanvas.height, localPinned.value.length, scrollX.value,
+    scrollY.value, canvasH.value, localPinned.value.length, scrollX.value,
     aggregateRow.value !== null,
     rowHeights.value ?? undefined,
   )
