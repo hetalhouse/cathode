@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.0 — 2026-11-14
+
+**CathodeGauge — a real gauge through the pipeline.** A bipolar gauge surface: a readout (big
+figure + stance + sub-line), a needle on a left↔right axis that eases to each new `value` (and
+sweeps in from centre on mount), then an optional boxed caption, a dim note and a wrapping row
+of item chips (`{ label, side, value, tone }`) — the shape of a long/short book's net-tilt
+read-out, one chip per position, with nothing trading-specific baked in (poles, letters and copy
+are props). Same barrel / scanlines / vignette / magnify-lens shader as the other surfaces, the
+2D fallback when WebGL is unavailable, backing store at devicePixelRatio (crisp on retina),
+context-loss recovery. Themes: none (transparent — inherits the host's glass), paper, phosphor,
+amber; `colors` overrides the palette per instance. Demo: new GAUGE tab (Tilt). Exports:
+`CathodeGauge`, `GaugeItem`, `GaugeColors`, `GAUGE_THEME_COLORS`.
+
+## 0.8.4 / 0.8.3 — 2026-09
+- Retina: CathodeGrid's composite texture and the candle wall render at devicePixelRatio
+  (crisp gridlines / text / candles).
+
 ## 0.8.2 — 2026-09-12
 - Narrow-cell pill suppression actually suppresses: hline labels default to the
   PRICE tag when label is undefined — the wall now passes label: '' (the one
