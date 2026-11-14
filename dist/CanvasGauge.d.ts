@@ -21,6 +21,29 @@ export interface GaugeItem {
     /** colour of `value` */
     tone?: 'up' | 'down' | 'neutral';
 }
+/** A labelled tick on the main axis (a second hurdle, a danger line) or a meter threshold. */
+export interface GaugeMark {
+    value: number;
+    label?: string;
+    /** a pole, 'neutral' (dim), or any CSS colour */
+    color?: 'left' | 'right' | 'neutral' | string;
+}
+/** A secondary bar under the axis — e.g. a margin guard: a filled track on [min, max] with
+ *  threshold ticks, a label row and the value at the right. */
+export interface GaugeMeter {
+    value: number | null;
+    min?: number;
+    max?: number;
+    /** small uppercase label, left of the row above the bar */
+    label?: string;
+    /** small dim text, right of that row */
+    hint?: string;
+    /** the figure at the bar's right; defaults to `value` */
+    valueText?: string;
+    /** fill + value colour */
+    tone?: 'up' | 'down' | 'warn' | 'neutral';
+    thresholds?: GaugeMark[];
+}
 export interface GaugeColors {
     bg: string;
     text: string;
@@ -30,6 +53,8 @@ export interface GaugeColors {
     /** the right pole (e.g. long / up) */
     right: string;
     neutral: string;
+    /** the meter's 'warn' tone */
+    warn: string;
     /** chip / caption-box fill */
     surface: string;
     border: string;
@@ -52,6 +77,10 @@ export interface GaugeDrawOpts {
     leftLabel: string;
     rightLabel: string;
     sideLetters: [string, string];
+    /** labelled ticks on the axis */
+    marks?: GaugeMark[];
+    /** the secondary bar, drawn between the axis and the caption */
+    meter?: GaugeMeter | null;
     caption?: string;
     note?: string;
     items: GaugeItem[];
