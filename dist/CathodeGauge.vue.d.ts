@@ -1,4 +1,4 @@
-import type { GaugeItem, GaugeColors } from './CanvasGauge';
+import type { GaugeItem, GaugeColors, GaugeMark, GaugeMeter } from './CanvasGauge';
 import './cathode.css';
 type __VLS_Props = {
     /** 'none' = transparent, inherits the host (glass); built-ins: phosphor | amber | paper. */
@@ -23,6 +23,10 @@ type __VLS_Props = {
     rightLabel?: string;
     /** the letter a chip shows for each pole, e.g. ['S', 'L'] */
     sideLetters?: [string, string];
+    /** labelled ticks on the axis (a second hurdle, a danger line) */
+    marks?: GaugeMark[];
+    /** a secondary bar under the axis — e.g. a margin guard with its thresholds */
+    meter?: GaugeMeter | null;
     /** boxed line under the axis (the posture) */
     caption?: string;
     /** dim paragraph under the caption */
@@ -44,10 +48,12 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     curvature: number;
     scanlines: boolean;
     magnify: boolean;
+    meter: GaugeMeter | null;
     animate: boolean;
     leftLabel: string;
     rightLabel: string;
     sideLetters: [string, string];
+    marks: GaugeMark[];
     items: GaugeItem[];
 }, {}, {}, {}, string, import("vue").ComponentProvideOptions, false, {}, any>;
 export default _default;

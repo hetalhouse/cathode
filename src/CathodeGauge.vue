@@ -15,7 +15,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick, inject } from '
 import type { CSSProperties, Ref } from 'vue'
 import * as THREE from 'three'
 import { drawGauge, GAUGE_THEME_COLORS } from './CanvasGauge'
-import type { GaugeItem, GaugeColors } from './CanvasGauge'
+import type { GaugeItem, GaugeColors, GaugeMark, GaugeMeter } from './CanvasGauge'
 import {
   curvatureToStrength,
   LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
@@ -47,6 +47,10 @@ const props = withDefaults(defineProps<{
   rightLabel?:  string
   /** the letter a chip shows for each pole, e.g. ['S', 'L'] */
   sideLetters?: [string, string]
+  /** labelled ticks on the axis (a second hurdle, a danger line) */
+  marks?:       GaugeMark[]
+  /** a secondary bar under the axis — e.g. a margin guard with its thresholds */
+  meter?:       GaugeMeter | null
   /** boxed line under the axis (the posture) */
   caption?:     string
   /** dim paragraph under the caption */
@@ -70,6 +74,8 @@ const props = withDefaults(defineProps<{
   leftLabel:   '−',
   rightLabel:  '+',
   sideLetters: () => ['−', '+'],
+  marks:       () => [],
+  meter:       null,
   items:       () => [],
   animate:     true,
 })
@@ -245,6 +251,7 @@ function draw(glow: boolean) {
     shown: shown.value, value: props.value, min: props.min, max: props.max,
     readout: props.readout, stance: props.stance, sub: props.sub,
     leftLabel: props.leftLabel, rightLabel: props.rightLabel, sideLetters: props.sideLetters,
+    marks: props.marks, meter: props.meter,
     caption: props.caption, note: props.note, items: props.items, emptyText: props.emptyText,
   })
 }
@@ -273,8 +280,8 @@ function redraw() {
 // Any prop that changes the picture redraws immediately (the needle animates separately).
 watch(
   () => [props.theme, props.curvature, props.scanlines, props.glow, props.readout, props.stance, props.sub,
-         props.leftLabel, props.rightLabel, props.sideLetters, props.caption, props.note, props.items,
-         props.emptyText, props.colors, props.min, props.max],
+         props.leftLabel, props.rightLabel, props.sideLetters, props.marks, props.meter, props.caption,
+         props.note, props.items, props.emptyText, props.colors, props.min, props.max],
   () => redraw(),
   { deep: true },
 )
