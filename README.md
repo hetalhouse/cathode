@@ -139,6 +139,8 @@ See [`ROADMAP.md`](https://github.com/hetalhouse/cathode/blob/main/ROADMAP.md) f
 | `bendField` | `boolean` | `true` | The bend buys field-of-view: the content canvas widens by what the warp absorbs (+54% at −45), so bending slides more columns in |
 
 Also in the family: **`CathodeCandleGrid`** — a wall of N mini candle charts rendered in ONE WebGL context (cells composite into a single warped sheet; `cell-click` routes through the barrel inverse; bend-field slides more cells in as the wall bends). See the demo's WALL tab.
+
+And **`CathodeGauge`** — a bipolar gauge through the same pipeline: a readout (big figure + `stance` + `sub`), a needle on a `leftLabel`↔`rightLabel` axis that eases to each new `value` on `[min, max]`, then an optional boxed `caption`, a dim `note` and a wrapping row of `items` chips (`{ label, side: 'left' | 'right', value, tone }`, lettered by `sideLetters`) — the shape of a long/short book's net-tilt read-out, one chip per position. `colors` overrides the pole colours (e.g. your P&L up/down), `animate: false` snaps the needle; `emptyText` stands in for an empty `items`. Same `theme` / `curvature` / `scanlines` / `glow` / `magnify` as the rest. See the demo's GAUGE tab.
 | `perspective` | `number` | `1400` | CSS perspective distance (px) — higher = subtler vanishing point |
 | `scanlines` | `boolean` | `true` | Overlay repeating scanline gradient |
 | `glow` | `boolean` | `true` | Apply `text-shadow` phosphor glow to cell text |

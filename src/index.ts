@@ -29,3 +29,6 @@ export type {
   TradeMarker,
 } from './CanvasCandle'
 export { CANDLE_THEME_COLORS } from './CanvasCandle'
+export { default as CathodeGauge }      from './CathodeGauge.vue'
+export type { GaugeItem, GaugeColors } from './CanvasGauge'
+export { GAUGE_THEME_COLORS } from './CanvasGauge'

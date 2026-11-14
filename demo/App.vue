@@ -8,14 +8,16 @@ import CathodeWorkspace from '../src/CathodeWorkspace.vue'
 import CathodeContainer from '../src/CathodeContainer.vue'
 import CathodeLoader    from '../src/CathodeLoader.vue'
 import CathodeCandleGrid from '../src/CathodeCandleGrid.vue'
+import CathodeGauge      from '../src/CathodeGauge.vue'
 import { buildDefaultLayout } from '../src/useCathodeLayout'
 import type { ColDef, GridApi } from '../src/types'
 import type { ContainerState } from '../src/useCathodeLayout'
 import type { LogEntry } from '../src/CanvasLog'
 import type { OHLCVCandle, PriceOverlay, TradeMarker } from '../src/CanvasCandle'
+import type { GaugeItem } from '../src/CanvasGauge'
 
 // ── Shared state ──────────────────────────────────────────────────────────────
-type DemoTab = 'grid' | 'workspace' | 'log' | 'candle' | 'wall' | 'terminal'
+type DemoTab = 'grid' | 'workspace' | 'log' | 'candle' | 'wall' | 'terminal' | 'gauge'
 const activeTab = ref<DemoTab>('workspace')
 
 type Theme = 'none' | 'phosphor' | 'amber' | 'paper'
@@ -147,6 +149,26 @@ const magnify    = ref(false)
 // boot/loading placeholder applied across the whole UI on demand. Real
 // consumers gate the loader on actual readiness; this just exposes it.
 const showLoaders = ref(false)
+
+// ── Gauge tab — a bipolar gauge: a long/short book's net tilt (the crash-hedge read-out) ──
+const gaugeValue = ref(-1)
+const gaugeItems = ref<GaugeItem[]>([
+  { label: 'QQQ', side: 'left',  value: '+1.4%', tone: 'up' },
+  { label: 'IWM', side: 'left',  value: '−0.3%', tone: 'down' },
+  { label: 'TLT', side: 'right', value: '+0.8%', tone: 'up' },
+])
+const gaugeStance = computed(() => (gaugeValue.value > 0 ? 'net long' : gaugeValue.value < 0 ? 'net short' : 'flat'))
+const gaugeCaption = computed(() =>
+  gaugeValue.value <= -2 ? 'CRASH-POSITIONED — the short tilt is the insurance paying out.'
+    : gaugeValue.value < 0 ? 'tilting short — a downtrend is developing.'
+    : gaugeValue.value === 0 ? 'balanced — no clear trend.'
+    : 'calm tape — riding the up-trends; would flip short as a selloff develops.')
+// a new tilt each click — the needle eases there
+function tiltGauge() {
+  let v = gaugeValue.value
+  while (v === gaugeValue.value) v = Math.floor(Math.random() * 9) - 4
+  gaugeValue.value = v
+}
 
 // ── Mobile-mode breakpoint ───────────────────────────────────────────────────
 // Below 720px: hide the Workspace tab (its 4-canvas layout stresses mobile
@@ -695,6 +717,9 @@ seedLogEntries()
         <button :class="['tab-btn', { active: activeTab === 'terminal' }]" @click="activeTab = 'terminal'">
           Terminal
         </button>
+        <button :class="['tab-btn', { active: activeTab === 'gauge' }]" @click="activeTab = 'gauge'">
+          Gauge
+        </button>
       </div>
 
       <!-- Theme -->
@@ -720,6 +745,9 @@ seedLogEntries()
         <input type="checkbox" v-model="showLoaders" data-testid="cf-show-loaders" />
         Show loaders
       </label>
+      <div v-if="activeTab === 'gauge'" class="demo-btns">
+        <button data-testid="cf-tilt" @click="tiltGauge">Tilt</button>
+      </div>
       <label v-if="activeTab === 'candle'">
         <input type="checkbox" v-model="showIndicators" data-testid="cf-show-indicators" />
         Indicators
@@ -823,6 +851,35 @@ seedLogEntries()
         :magnify="magnify"
         :bend-field="bendField"
         @cell-click="(id: string) => console.log('wall cell:', id)"
+      />
+    </div>
+
+    <!-- ── Gauge tab — a bipolar gauge: readout, needle on a left↔right axis, caption, chips ─── -->
+    <div v-show="activeTab === 'gauge'" class="tab-content">
+      <CathodeLoader
+        v-if="showLoaders"
+        :theme="theme" :curvature="curvature" :scanlines="scanlines" :glow="glow" :bend-field="bendField"
+        label="READING THE BOOK"
+      />
+      <CathodeGauge
+        v-else
+        :theme="theme"
+        :curvature="curvature"
+        :scanlines="scanlines"
+        :glow="glow"
+        :magnify="magnify"
+        :value="gaugeValue"
+        :min="-6"
+        :max="6"
+        :stance="gaugeStance"
+        sub="1 long · 2 short · 3 flat"
+        left-label="short"
+        right-label="long"
+        :side-letters="['S', 'L']"
+        :caption="gaugeCaption"
+        note="Insurance, not alpha — judge it by crash-protection, not a calm-month P&L. It bleeds a small premium in quiet tape and pays off when the long books crash."
+        :items="gaugeItems"
+        empty-text="Flat — no positions."
       />
     </div>
 
