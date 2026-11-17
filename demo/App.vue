@@ -232,6 +232,7 @@ watch(activeTab,  (tab) => { if (tab === 'grid') gridKey.value++ })
 
 function onGridReady(e: { api: GridApi }) {
   gridApi.value = e.api
+  ;(window as any).__cathodeGridApi = e.api // e2e: read column state
   e.api.setGridOption('rowData', trades)
   if (statusFilt.value !== 'all') setStatus(statusFilt.value)
 }
