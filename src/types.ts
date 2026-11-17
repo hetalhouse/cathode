@@ -54,6 +54,8 @@ export interface ColDef<T = any> {
 
   /** Initial sort direction */
   sort?:      'asc' | 'desc' | null
+  /** Precedence of the initial sort when several columns set `sort` (0 = primary) */
+  sortIndex?: number
 
   valueGetter?:   (params: ValueGetterParams<T>)   => any
   valueFormatter?: (params: ValueFormatterParams<T>) => string

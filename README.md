@@ -184,6 +184,7 @@ interface ColDef {
   resizable?:      boolean
   hide?:           boolean
   sort?:           'asc' | 'desc'   // initial sort
+  sortIndex?:      number           // precedence when several columns set `sort`
   valueGetter?:    (p) => any
   valueFormatter?: (p) => string
   cellStyle?:      CSSProperties | ((p) => CSSProperties)

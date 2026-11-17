@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 — 2026-11-17
+
+**CathodeGrid: shift-click multi-column sort.** Click a header to sort by it (asc → desc → off);
+shift-click another header to *append* it as the next sort key — repeat while holding shift. A
+plain click resets to that column alone. Headers show the direction arrow, plus the precedence
+number (`▲1`, `▼2`) once more than one column is sorted. `getColumnState()` now returns every
+sorted column with its `sortIndex`, `applyColumnState()` restores the order, and `ColDef.sortIndex`
+orders several initial `sort` columns.
+
 ## 0.9.1 — 2026-11-14
 
 **CathodeGauge: axis marks + a secondary meter.** `marks` draws labelled ticks on the main

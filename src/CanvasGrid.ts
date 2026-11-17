@@ -147,8 +147,8 @@ export interface DrawGridOpts {
   scrollX:      number        // horizontal scroll offset (px)
   theme:        string
   glow:         boolean
-  sortColId:    string | null
-  sortDir:      'asc' | 'desc' | null
+  /** Ordered sort criteria (primary first) */
+  sorts:        { colId: string, dir: 'asc' | 'desc' }[]
   colFilters:   Record<string, string>
   hoveredRow:   number        // index in rows, -1 = none
   selectedRow:  number        // index in rows, -1 = none — the "active" cell (cursor)
@@ -252,7 +252,8 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
     if (hx >= W) break
 
     const hasFilter = !!opts.colFilters[col.colId]
-    const isSort    = opts.sortColId === col.colId
+    const sortIdx   = opts.sorts.findIndex(k => k.colId === col.colId)
+    const isSort    = sortIdx >= 0
     const label     = (col.colDef.headerName ?? col.colId).toUpperCase()
 
     ctx.save()
@@ -280,7 +281,9 @@ export function drawGrid(canvas: HTMLCanvasElement, opts: DrawGridOpts): void {
       const tw = ctx.measureText(label).width
       ctx.font      = `8px system-ui, -apple-system, sans-serif`
       ctx.fillStyle = c.accent
-      ctx.fillText(opts.sortDir === 'asc' ? '▲' : '▼', hx + 8 + tw + 4, HEADER_H / 2)
+      const arrow = opts.sorts[sortIdx].dir === 'asc' ? '▲' : '▼'
+      // Multi-sort: show precedence next to the arrow
+      ctx.fillText(opts.sorts.length > 1 ? `${arrow}${sortIdx + 1}` : arrow, hx + 8 + tw + 4, HEADER_H / 2)
     }
 
     // Filter icon

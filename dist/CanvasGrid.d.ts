@@ -60,8 +60,11 @@ export interface DrawGridOpts {
     scrollX: number;
     theme: string;
     glow: boolean;
-    sortColId: string | null;
-    sortDir: 'asc' | 'desc' | null;
+    /** Ordered sort criteria (primary first) */
+    sorts: {
+        colId: string;
+        dir: 'asc' | 'desc';
+    }[];
     colFilters: Record<string, string>;
     hoveredRow: number;
     selectedRow: number;
