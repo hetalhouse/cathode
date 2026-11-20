@@ -10,18 +10,17 @@
  * Same barrel + scanlines + vignette + magnify-lens shader as CathodeLog / Grid / Candle, the
  * same 2D fallback when WebGL is unavailable, backing store at devicePixelRatio (crisp text on
  * retina), context-loss recovery, ResizeObserver / IntersectionObserver sizing.
+ *
+ * The picture itself (offscreen canvas + texture + CRT shader) lives in a headless CathodeSurface;
+ * this component is just the DOM presenter — renderer, camera, observers, mouse.
  */
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, inject } from 'vue'
 import type { CSSProperties, Ref } from 'vue'
 import * as THREE from 'three'
 import { drawGauge, GAUGE_THEME_COLORS } from './CanvasGauge'
 import type { GaugeItem, GaugeColors } from './CanvasGauge'
-import {
-  curvatureToStrength,
-  LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
-  createLensUniforms, writeLensUniforms, eventToLensUV, LENS_INACTIVE,
-} from './lensShader'
-import type { MouseLensUV } from './lensShader'
+import { CathodeSurface } from './CathodeSurface'
+import { eventToLensUV } from './lensShader'
 import './cathode.css'
 
 const props = withDefaults(defineProps<{
@@ -96,7 +95,10 @@ function animateTo() {
 }
 watch(() => props.value, animateTo)
 
-// ── Three.js ──────────────────────────────────────────────────────────────────
+// ── Surface + renderer ────────────────────────────────────────────────────────
+// The CathodeSurface owns the offscreen canvas, the texture and the CRT shader material; this
+// component only supplies the renderer + orthographic camera that present it full-screen
+// (mode 'screen'). The same surface can instead be dropped on a mesh in a 3D scene.
 let renderer:    THREE.WebGLRenderer | null = null
 let webglFailed  = false
 
@@ -107,70 +109,21 @@ function releaseRenderer() {
   try { renderer.dispose() } catch { /* already torn down */ }
   renderer = null
 }
-let scene:     THREE.Scene
-let camera:    THREE.OrthographicCamera
-let material:  THREE.ShaderMaterial
-let texture:   THREE.CanvasTexture
-let offCanvas: HTMLCanvasElement
-let dpr = 1
-let logicalW = 0, logicalH = 0
-const mouseLensUV: MouseLensUV = { x: LENS_INACTIVE.x, y: LENS_INACTIVE.y }
+let scene:  THREE.Scene
+let camera: THREE.OrthographicCamera
 
-const VERT = `
-  varying vec2 vUv;
-  void main() {
-    vUv         = uv;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
-  }
-`
-
-// Same barrel + scanlines + vignette + lens as CathodeLog (see the barrel() comment there).
-const FRAG = `
-  uniform sampler2D uTex;
-  uniform float     uStrength;
-  uniform float     uScanlines;
-  uniform float     uVignette;
-  ${LENS_FRAG_UNIFORMS}
-
-  varying vec2 vUv;
-
-  vec2 barrel(vec2 uv) {
-    vec2  cc   = uv - 0.5;
-    float as   = abs(uStrength);
-    float dist = dot(cc, cc) * as;
-    vec2  m    = cc + cc * (1.0 + dist) * dist * sign(uStrength);
-    if (uStrength < 0.0) {
-      float cd = 0.5 * as;
-      float cp = 0.5 * (1.0 + cd) * cd;
-      m /= (1.0 - 2.0 * cp);
-    }
-    return vec2(0.5) + m;
-  }
-
-  ${LENS_FRAG_FN}
-
-  void main() {
-    vec2 lensUV = applyLens(vUv);
-    vec2 uv     = barrel(lensUV);
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-      gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
-      return;
-    }
-    vec4 color = texture2D(uTex, uv);
-    if (uScanlines > 0.5 && mod(gl_FragCoord.y, 2.0) < 1.0) color.rgb *= 0.87;
-    if (uVignette > 0.5) {
-      vec2  vc   = uv - 0.5;
-      float vign = 1.0 - dot(vc, vc) * 0.6;
-      color.rgb  *= clamp(vign, 0.0, 1.0);
-    }
-    ${LENS_FRAG_RING}
-    gl_FragColor = color;
-  }
-`
+const surface = new CathodeSurface({
+  paint: (canvas, { dpr, glow }) => drawGauge(canvas, {
+    dpr, theme: props.theme, colors: props.colors, glow,
+    shown: shown.value, value: props.value, min: props.min, max: props.max,
+    readout: props.readout, stance: props.stance, sub: props.sub,
+    leftLabel: props.leftLabel, rightLabel: props.rightLabel, sideLetters: props.sideLetters,
+    caption: props.caption, note: props.note, items: props.items, emptyText: props.emptyText,
+  }),
+})
 
 function initThree() {
   if (!canvasEl.value || !wrapEl.value) return
-  offCanvas = document.createElement('canvas')
   try {
     renderer = new THREE.WebGLRenderer({ canvas: canvasEl.value, antialias: false, alpha: true })
   } catch { webglFailed = true }
@@ -185,88 +138,50 @@ function initThree() {
   renderer!.setClearColor(0x000000, 0)
   scene  = new THREE.Scene()
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
-  texture = new THREE.CanvasTexture(offCanvas)
-  texture.minFilter = THREE.LinearFilter
-  texture.magFilter = THREE.LinearFilter
-  material = new THREE.ShaderMaterial({
-    uniforms: {
-      uTex:       { value: texture },
-      uStrength:  { value: 0.0 },
-      uScanlines: { value: 1.0 },
-      uVignette:  { value: 1.0 },
-      ...createLensUniforms(),
-    },
-    vertexShader:   VERT,
-    fragmentShader: FRAG,
-    transparent:    true,
-  })
-  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material))
+  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), surface.material))
   sizeToContainer()
 }
 
 // Backing store at physical resolution (× dpr, capped at 2); the draw works in logical px.
-// Early-return when nothing changed: setting canvas.width clears it even at the same value,
-// and ResizeObserver fires spuriously (see CathodeLog).
+// surface.resize() is a no-op (false) when nothing changed: setting canvas.width clears it even
+// at the same value, and ResizeObserver fires spuriously (see CathodeLog).
 function sizeToContainer() {
-  if (!wrapEl.value || !offCanvas) return
+  if (!wrapEl.value) return
   if (!renderer && !webglFailed) return
   const W = wrapEl.value.clientWidth
   const H = wrapEl.value.clientHeight
-  if (!W || !H) return
-  const d  = Math.min(window.devicePixelRatio || 1, 2)
-  const bw = Math.round(W * d), bh = Math.round(H * d)
-  if (offCanvas.width === bw && offCanvas.height === bh && dpr === d) return
-  dpr = d
-  logicalW = W; logicalH = H
-  offCanvas.width  = bw
-  offCanvas.height = bh
+  if (!surface.resize(W, H)) return
   if (renderer) {
-    if (texture) {
-      texture.dispose()
-      texture = new THREE.CanvasTexture(offCanvas)
-      texture.minFilter = THREE.LinearFilter
-      texture.magFilter = THREE.LinearFilter
-      if (material) material.uniforms.uTex.value = texture
-    }
-    renderer.setPixelRatio(dpr)
+    renderer.setPixelRatio(surface.dpr)
     renderer.setSize(W, H)
   } else if (canvasEl.value) {
-    canvasEl.value.width  = bw
-    canvasEl.value.height = bh
+    canvasEl.value.width  = surface.canvas.width
+    canvasEl.value.height = surface.canvas.height
     canvasEl.value.style.width  = W + 'px'
     canvasEl.value.style.height = H + 'px'
   }
   redraw()
 }
 
-function draw(glow: boolean) {
-  drawGauge(offCanvas, {
-    dpr, theme: props.theme, colors: props.colors, glow,
-    shown: shown.value, value: props.value, min: props.min, max: props.max,
-    readout: props.readout, stance: props.stance, sub: props.sub,
-    leftLabel: props.leftLabel, rightLabel: props.rightLabel, sideLetters: props.sideLetters,
-    caption: props.caption, note: props.note, items: props.items, emptyText: props.emptyText,
-  })
-}
-
 function redraw() {
-  if (!offCanvas?.width) return
+  if (!surface.canvas.width) return
   if (webglFailed) {
     if (!canvasEl.value) return
-    draw(false)
+    surface.paintOnly(false)
     const ctx2d = canvasEl.value.getContext('2d')
-    if (ctx2d) { ctx2d.setTransform(1, 0, 0, 1, 0, 0); ctx2d.clearRect(0, 0, canvasEl.value.width, canvasEl.value.height); ctx2d.drawImage(offCanvas, 0, 0) }
+    if (ctx2d) { ctx2d.setTransform(1, 0, 0, 1, 0, 0); ctx2d.clearRect(0, 0, canvasEl.value.width, canvasEl.value.height); ctx2d.drawImage(surface.canvas, 0, 0) }
     return
   }
-  if (!renderer || !material || !texture) return
+  if (!renderer) return
   const isPaper = props.theme === 'paper'
-  material.uniforms.uStrength.value  = curvatureToStrength(props.curvature)
-  material.uniforms.uScanlines.value = (props.scanlines && !isPaper) ? 1.0 : 0.0
-  material.uniforms.uVignette.value  = isPaper ? 0.0 : 1.0
-  // lens radius is a fixed physical size → logical canvas size, not the ×dpr backing store
-  writeLensUniforms(material, props.magnify, mouseLensUV, logicalW || offCanvas.width, logicalH || offCanvas.height)
-  draw(props.glow)
-  texture.needsUpdate = true
+  surface.setLook({
+    curvature: props.curvature,
+    scanlines: props.scanlines && !isPaper,
+    vignette:  !isPaper,
+    magnify:   props.magnify,
+  })
+  surface.syncUniforms()
+  surface.paint(props.glow)
   renderer.render(scene, camera)
 }
 
@@ -279,21 +194,18 @@ watch(
   { deep: true },
 )
 watch(() => props.magnify, (on) => {
-  if (!on) { mouseLensUV.x = LENS_INACTIVE.x; mouseLensUV.y = LENS_INACTIVE.y }
+  if (!on) surface.setLens(null)
   redraw()
 })
 
 // ── Mouse — the lens follows the cursor ──────────────────────────────────────
 function onCanvasMouseMove(e: MouseEvent) {
   if (!props.magnify || !canvasEl.value) return
-  const uv = eventToLensUV(e, canvasEl.value)
-  mouseLensUV.x = uv.x
-  mouseLensUV.y = uv.y
+  surface.setLens(eventToLensUV(e, canvasEl.value))
   redraw()
 }
 function onCanvasMouseLeave() {
-  mouseLensUV.x = LENS_INACTIVE.x
-  mouseLensUV.y = LENS_INACTIVE.y
+  surface.setLens(null)
   redraw()
 }
 
@@ -313,6 +225,7 @@ function onContextRestored() {
   renderer    = null
   webglFailed = false
   initThree()
+  redraw() // the surface (and its canvas size) survives the context — repaint + re-upload
 }
 
 onMounted(() => {
@@ -346,8 +259,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', scheduleResize)
   window.visualViewport?.removeEventListener('resize', scheduleResize)
   releaseRenderer()
-  texture?.dispose()
-  material?.dispose()
+  surface.dispose()
 })
 
 // ── Wrap style ────────────────────────────────────────────────────────────────

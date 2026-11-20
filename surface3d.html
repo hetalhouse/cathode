@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>cathode — CathodeSurface on a 3D plane</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #05080a; overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #hud { position: fixed; left: 12px; top: 10px; color: #6ee7a7; font: 12px ui-monospace, Menlo, monospace; opacity: .8; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="hud">CathodeSurface · world mode · drag = orbit · ?curv=-20&amp;magnify=1</div>
+  <script type="module" src="/demo/surface3d.ts"></script>
+</body>
+</html>
