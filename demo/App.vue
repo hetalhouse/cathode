@@ -163,11 +163,27 @@ const gaugeCaption = computed(() =>
     : gaugeValue.value < 0 ? 'tilting short — a downtrend is developing.'
     : gaugeValue.value === 0 ? 'balanced — no clear trend.'
     : 'calm tape — riding the up-trends; would flip short as a selloff develops.')
-// a new tilt each click — the needle eases there
+// a secondary meter — a margin guard with its thresholds (0.9.1)
+const gaugeMargin = ref(0.31)
+const gaugeMeter = computed(() => {
+  const m = gaugeMargin.value
+  return {
+    label: 'margin guard', hint: 'liquidation headroom · reserve +$200.00',
+    value: m, min: 0, max: 0.6, valueText: m.toFixed(2),
+    tone: (m < 0.15 ? 'down' : m < 0.25 ? 'warn' : 'up') as 'down' | 'warn' | 'up',
+    thresholds: [
+      { value: 0.25, label: 'top-up', color: 'neutral' },
+      { value: 0.15, label: 'de-risk', color: 'left' },
+      { value: 0.05, label: 'halt', color: 'left' },
+    ],
+  }
+})
+// a new tilt (and margin) each click — the needle eases there, the meter refills
 function tiltGauge() {
   let v = gaugeValue.value
   while (v === gaugeValue.value) v = Math.floor(Math.random() * 9) - 4
   gaugeValue.value = v
+  gaugeMargin.value = +(0.03 + Math.random() * 0.5).toFixed(2)
 }
 
 // ── Mobile-mode breakpoint ───────────────────────────────────────────────────
@@ -216,6 +232,7 @@ watch(activeTab,  (tab) => { if (tab === 'grid') gridKey.value++ })
 
 function onGridReady(e: { api: GridApi }) {
   gridApi.value = e.api
+  ;(window as any).__cathodeGridApi = e.api // e2e: read column state
   e.api.setGridOption('rowData', trades)
   if (statusFilt.value !== 'all') setStatus(statusFilt.value)
 }
@@ -876,6 +893,8 @@ seedLogEntries()
         left-label="short"
         right-label="long"
         :side-letters="['S', 'L']"
+        :marks="[{ value: -2, label: 'crash-positioned', color: 'left' }, { value: 3, label: 'calm tape', color: 'neutral' }]"
+        :meter="gaugeMeter"
         :caption="gaugeCaption"
         note="Insurance, not alpha — judge it by crash-protection, not a calm-month P&L. It bleeds a small premium in quiet tape and pays off when the long books crash."
         :items="gaugeItems"

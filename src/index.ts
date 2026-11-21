@@ -30,7 +30,7 @@ export type {
 } from './CanvasCandle'
 export { CANDLE_THEME_COLORS } from './CanvasCandle'
 export { default as CathodeGauge }      from './CathodeGauge.vue'
-export type { GaugeItem, GaugeColors } from './CanvasGauge'
+export type { GaugeItem, GaugeColors, GaugeMark, GaugeMeter } from './CanvasGauge'
 export { GAUGE_THEME_COLORS } from './CanvasGauge'
 export { CathodeSurface, barrelUV, lensUV } from './CathodeSurface'
 export type { CathodeSurfaceOptions, SurfaceMode, SurfacePainter, SurfaceLook } from './CathodeSurface'

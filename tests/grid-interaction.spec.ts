@@ -141,3 +141,46 @@ test.describe('CathodeGrid interaction', () => {
     expect(watch.entries).toEqual([]);
   });
 });
+
+test.describe('CathodeGrid multi-sort', () => {
+  test('shift-click appends sort keys; plain click resets', async ({ page }) => {
+    const watch = collectConsoleErrors(page);
+    await page.goto('/');
+    await page.getByRole('button', { name: /^Grid$/ }).click();
+    const canvas = page.locator('.tab-content:visible canvas').first();
+    await canvas.waitFor({ state: 'visible' });
+    await page.waitForTimeout(400);
+    const box = await canvas.boundingBox();
+    if (!box) throw new Error('grid canvas not found');
+
+    const sorts = () => page.evaluate(() =>
+      (window as any).__cathodeGridApi.getColumnState()
+        .filter((s: any) => s.sort)
+        .sort((a: any, b: any) => a.sortIndex - b.sortIndex)
+        .map((s: any) => `${s.colId}:${s.sort}`));
+    const click = async (x: number, shift: boolean) => {
+      if (shift) await page.keyboard.down('Shift');
+      await page.mouse.click(box.x + x, box.y + HEADER_H / 2);
+      if (shift) await page.keyboard.up('Shift');
+      await page.waitForTimeout(80);
+    };
+
+    await click(60, false);                     // col 1 — first column is 148px wide
+    const a = await sorts();
+    expect(a.length).toBe(1);
+    await click(200, true);                     // col 2, shift → append
+    const b = await sorts();
+    expect(b.length).toBe(2);
+    expect(b[0]).toBe(a[0]);
+    await click(60, true);                      // shift again on col 1 → flips to desc, keeps col 2
+    const c = await sorts();
+    expect(c.length).toBe(2);
+    expect(c[0].endsWith(':desc')).toBe(true);
+    expect(c[1]).toBe(b[1]);
+    await click(200, false);                    // plain click → reset to col 2 alone
+    const d = await sorts();
+    expect(d.length).toBe(1);
+    expect(d[0].split(':')[0]).toBe(b[1].split(':')[0]);
+    expect(watch.entries).toEqual([]);
+  });
+});

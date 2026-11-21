@@ -89,7 +89,8 @@ const emit = defineEmits<{
 const localRowData  = ref<any[]>(props.rowData ?? [])
 const localPinned   = ref<any[]>(props.pinnedBottomRowData ?? [])
 const quickFilter   = ref('')
-const sortState     = ref<{ colId: string, dir: 'asc' | 'desc' } | null>(null)
+/** Ordered sort criteria — index 0 is the primary key. Shift-click appends. */
+const sortState     = ref<{ colId: string, dir: 'asc' | 'desc' }[]>([])
 const colFilters    = reactive<Record<string, string>>({})
 const colWidths     = reactive<Record<string, number>>({})   // hint-space overrides
 const hiddenCols    = reactive(new Set<string>())
@@ -298,6 +299,15 @@ function getCellStyle(col: ResolvedCol, row: any): CSSProperties {
   return col.colDef.cellStyle
 }
 
+/** Initial sort from columnDefs — `sortIndex` orders them, else column order. */
+function initialSorts(): { colId: string, dir: 'asc' | 'desc' }[] {
+  return props.columnDefs
+    .map((d, i) => ({ d, i }))
+    .filter(({ d }) => d.sort)
+    .sort((a, b) => (a.d.sortIndex ?? a.i) - (b.d.sortIndex ?? b.i))
+    .map(({ d }) => ({ colId: colIdOf(d), dir: d.sort! }))
+}
+
 // ── Filter + sort + paging ────────────────────────────────────────────────────
 
 const filteredRows = computed<any[]>(() => {
@@ -326,20 +336,22 @@ const filteredRows = computed<any[]>(() => {
     }
   }
 
-  if (sortState.value) {
-    const { colId, dir } = sortState.value
-    const col = resolvedCols.value.find(c => c.colId === colId)
-    if (col) {
-      rows = [...rows].sort((a, b) => {
+  const sortKeys = sortState.value
+    .map(({ colId, dir }) => ({ col: resolvedCols.value.find(c => c.colId === colId), dir }))
+    .filter((k): k is { col: ResolvedCol, dir: 'asc' | 'desc' } => !!k.col)
+  if (sortKeys.length) {
+    rows = [...rows].sort((a, b) => {
+      for (const { col, dir } of sortKeys) {
         const av = getCellValue(a, col)
         const bv = getCellValue(b, col)
         let cmp = 0
         if (col.colDef.comparator)                               cmp = col.colDef.comparator(av, bv)
         else if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv
         else cmp = String(av ?? '').localeCompare(String(bv ?? ''), undefined, { numeric: true })
-        return dir === 'asc' ? cmp : -cmp
-      })
-    }
+        if (cmp) return dir === 'asc' ? cmp : -cmp
+      }
+      return 0
+    })
   }
 
   return rows
@@ -734,8 +746,7 @@ function redraw() {
       scrollX:     scrollX.value,
       theme:       props.theme,
       glow:        false,
-      sortColId:   sortState.value?.colId ?? null,
-      sortDir:     sortState.value?.dir   ?? null,
+      sorts:       sortState.value,
       colFilters,
       hoveredRow:  hoveredRow.value,
       selectedRow: selectedCell.value?.row ?? -1,
@@ -777,8 +788,7 @@ function redraw() {
     scrollX:     scrollX.value,
     theme:       props.theme,
     glow:        props.glow,
-    sortColId:   sortState.value?.colId ?? null,
-    sortDir:     sortState.value?.dir   ?? null,
+    sorts:       sortState.value,
     colFilters,
     hoveredRow:  hoveredRow.value,
     selectedRow: selectedCell.value?.row ?? -1,
@@ -1006,9 +1016,19 @@ function onCanvasClick(e: MouseEvent) {
       }
     } else if (col.colDef.sortable !== false) {
       activeFilter.value = null
-      sortState.value = sortState.value?.colId === col.colId
-        ? sortState.value.dir === 'asc' ? { colId: col.colId, dir: 'desc' } : null
-        : { colId: col.colId, dir: 'asc' }
+      const cur  = sortState.value.find(k => k.colId === col.colId)
+      const next = !cur ? 'asc' : cur.dir === 'asc' ? 'desc' : null
+      if (e.shiftKey) {
+        // Shift-click: add / flip / drop this column, keep the other keys
+        sortState.value = !cur
+          ? [...sortState.value, { colId: col.colId, dir: 'asc' }]
+          : next
+            ? sortState.value.map(k => k.colId === col.colId ? { colId: k.colId, dir: next } : k)
+            : sortState.value.filter(k => k.colId !== col.colId)
+      } else {
+        // Plain click: reset to this column alone
+        sortState.value = next ? [{ colId: col.colId, dir: next }] : []
+      }
       emit('sort-changed')
     }
     return
@@ -1232,18 +1252,21 @@ const gridApi: GridApi = {
       return {
         colId,
         hide:      hiddenCols.has(colId),
-        sort:      sortState.value?.colId === colId ? sortState.value.dir : null,
-        sortIndex: sortState.value?.colId === colId ? 0 : null,
+        sort:      sortState.value.find(k => k.colId === colId)?.dir ?? null,
+        sortIndex: sortState.value.some(k => k.colId === colId)
+          ? sortState.value.findIndex(k => k.colId === colId) : null,
         width:     colWidths[colId] ?? def.width,
       }
     })
   },
 
   applyColumnState({ state }) {
+    const sorted = state.filter(s => s.sort)
+      .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+    if (sorted.length) sortState.value = sorted.map(s => ({ colId: s.colId, dir: s.sort! }))
     for (const s of state) {
       if (s.hide === true)  hiddenCols.add(s.colId)
       if (s.hide === false) hiddenCols.delete(s.colId)
-      if (s.sort)           sortState.value = { colId: s.colId, dir: s.sort }
       if (s.width)          colWidths[s.colId] = s.width
     }
   },
@@ -1296,8 +1319,7 @@ const gridApi: GridApi = {
     for (const def of props.columnDefs) {
       if (def.hide) hiddenCols.add(colIdOf(def))
     }
-    const init = props.columnDefs.find(d => d.sort)
-    sortState.value    = init ? { colId: colIdOf(init), dir: init.sort! } : null
+    sortState.value    = initialSorts()
     for (const k of Object.keys(colWidths))  delete colWidths[k]
     for (const k of Object.keys(colFilters)) delete colFilters[k]
     quickFilter.value  = ''
@@ -1366,9 +1388,8 @@ function onContextRestored() {
 onMounted(() => {
   for (const def of props.columnDefs) {
     if (def.hide) hiddenCols.add(colIdOf(def))
-    if (def.sort && !sortState.value)
-      sortState.value = { colId: colIdOf(def), dir: def.sort }
   }
+  if (!sortState.value.length) sortState.value = initialSorts()
   localRowData.value = props.rowData ?? []
   localPinned.value  = props.pinnedBottomRowData ?? []
 

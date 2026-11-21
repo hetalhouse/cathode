@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.10.0 — 2026-11-17
+
+**CathodeGrid: shift-click multi-column sort.** Click a header to sort by it (asc → desc → off);
+shift-click another header to *append* it as the next sort key — repeat while holding shift. A
+plain click resets to that column alone. Headers show the direction arrow, plus the precedence
+number (`▲1`, `▼2`) once more than one column is sorted. `getColumnState()` now returns every
+sorted column with its `sortIndex`, `applyColumnState()` restores the order, and `ColDef.sortIndex`
+orders several initial `sort` columns.
+
+## 0.9.1 — 2026-11-14
+
+**CathodeGauge: axis marks + a secondary meter.** `marks` draws labelled ticks on the main
+axis (a dashed line through the track, the label under it — a second hurdle, a danger line);
+`meter` draws a secondary bar between the axis and the caption: a label row (`label` left,
+`hint` right), a filled track on `[min, max]` toned up / down / warn / neutral, threshold ticks
+with their own labels, and the value (`valueText`) at the right — the shape of a margin guard.
+`GaugeColors` gains `warn`. Exports: `GaugeMark`, `GaugeMeter`. Demo: the GAUGE tab shows both
+(Tilt refills the meter too).
+
 ## 0.9.0 — 2026-11-14
 
 **CathodeGauge — a real gauge through the pipeline.** A bipolar gauge surface: a readout (big
