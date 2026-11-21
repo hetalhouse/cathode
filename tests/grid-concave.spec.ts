@@ -71,6 +71,20 @@ test.describe('curvatureToStrength + signed barrel math', () => {
   });
 });
 
+test.describe('convex hit-test', () => {
+  test('a convex bend maps vertical screen positions with the FULL bend (no Y attenuation)', () => {
+    const s = curvatureToStrength(45);
+    // a point near the top edge, off-centre: the shader samples further out in Y than the screen
+    // position; with Y wrongly scaled by 0.15 the click would land ~0.07 of the height off.
+    const [bx, by] = applyBarrel(0.8, 0.95, s);
+    const cc = { x: 0.3, y: 0.45 };
+    const dist = (cc.x * cc.x + cc.y * cc.y) * Math.abs(s);
+    expect(by).toBeCloseTo(0.95 + cc.y * (1 + dist) * dist, 9);
+    expect(bx).toBeCloseTo(0.8 + cc.x * (1 + dist) * dist, 9);
+    expect(by - 0.95).toBeGreaterThan(0.07);   // 0.084 — would be ~0.013 under the 0.15 attenuation
+  });
+});
+
 test.describe('scale-aware header hit zones', () => {
   test('center local scale ≈ fit-rescale factor at −45; zones widen accordingly', () => {
     const s = curvatureToStrength(-45);

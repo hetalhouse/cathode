@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { collectConsoleErrors } from './_helpers';
+import { collectConsoleErrors, screenPointForContent } from './_helpers';
 
 /**
  * High-frequency interaction tests for CathodeGrid.
@@ -158,26 +158,33 @@ test.describe('CathodeGrid multi-sort', () => {
         .filter((s: any) => s.sort)
         .sort((a: any, b: any) => a.sortIndex - b.sortIndex)
         .map((s: any) => `${s.colId}:${s.sort}`));
+    // Click where the header cell is DRAWN (the demo's default 25° convex bend leaves the panel's
+    // top-left corner bezel, so a fixed offset from the box corner misses the header).
     const click = async (x: number, shift: boolean) => {
+      const at = screenPointForContent(box, 25, x, HEADER_H / 2);
+      if (!at) throw new Error(`no screen pixel draws header content x=${x}`);
       if (shift) await page.keyboard.down('Shift');
-      await page.mouse.click(box.x + x, box.y + HEADER_H / 2);
+      await page.mouse.click(box.x + at[0], box.y + at[1]);
       if (shift) await page.keyboard.up('Shift');
       await page.waitForTimeout(80);
     };
 
-    await click(60, false);                     // col 1 — first column is 148px wide
+    // Columns 2 and 3 (content x 148–296 and 296–376): column 1 (entry_time) starts with an initial
+    // desc sort, so a plain click on it would CLEAR the sort rather than set one.
+    const COL2 = 222, COL3 = 336;
+    await click(COL2, false);                   // col 2 alone
     const a = await sorts();
     expect(a.length).toBe(1);
-    await click(200, true);                     // col 2, shift → append
+    await click(COL3, true);                    // col 3, shift → append
     const b = await sorts();
     expect(b.length).toBe(2);
     expect(b[0]).toBe(a[0]);
-    await click(60, true);                      // shift again on col 1 → flips to desc, keeps col 2
+    await click(COL2, true);                    // shift again on col 2 → flips to desc, keeps col 3
     const c = await sorts();
     expect(c.length).toBe(2);
     expect(c[0].endsWith(':desc')).toBe(true);
     expect(c[1]).toBe(b[1]);
-    await click(200, false);                    // plain click → reset to col 2 alone
+    await click(COL3, false);                   // plain click → reset to col 3 alone
     const d = await sorts();
     expect(d.length).toBe(1);
     expect(d[0].split(':')[0]).toBe(b[1].split(':')[0]);

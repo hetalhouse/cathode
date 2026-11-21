@@ -765,7 +765,10 @@ export function applyBarrel(uvX: number, uvY: number, strength: number): [number
   }
   const dx = ccX * (1 + dist) * dist
   const dy = ccY * (1 + dist) * dist
-  return [uvX + dx, uvY + dy * 0.15]   // Y attenuated to match shader (legacy convex quirk)
+  // FAITHFUL shader mirror — the full bend on BOTH axes. (This used to scale Y by 0.15, a leftover
+  // from a shader that attenuated convex Y; every shader now applies it in full, so clicks near
+  // the top/bottom of a convex panel landed up to ~0.15 of the height away from the pixel drawn.)
+  return [uvX + dx, uvY + dy]
 }
 
 /**
