@@ -149,6 +149,14 @@ export class CathodeSurface {
   logicalW = 0
   logicalH = 0
 
+  /**
+   * Visible panel size in px, when it differs from the content canvas (CathodeGrid's bend-field
+   * gain draws a WIDER canvas than the screen it warps into). The lens is a fixed physical size
+   * and circular in SCREEN px, so its radius/aspect come from this; 0 = same as the content.
+   */
+  screenW = 0
+  screenH = 0
+
   private texture: THREE.CanvasTexture
   private readonly painter: SurfacePainter
   private readonly maxDpr: number
@@ -227,6 +235,11 @@ export class CathodeSurface {
     this.look = { ...this.look, ...look }
   }
 
+  setScreenSize(w: number, h: number) {
+    this.screenW = w
+    this.screenH = h
+  }
+
   /** Lens centre in surface UV (y up); null = lens off. */
   setLens(uv: MouseLensUV | null) {
     this.mouse.x = uv ? uv.x : LENS_INACTIVE.x
@@ -241,7 +254,7 @@ export class CathodeSurface {
     u.uVignette.value  = this.look.vignette  ? 1.0 : 0.0
     // lens radius is a fixed physical size → logical canvas size, not the ×dpr backing store
     writeLensUniforms(this.material, this.look.magnify, this.mouse,
-      this.logicalW || this.canvas.width, this.logicalH || this.canvas.height)
+      this.screenW || this.logicalW || this.canvas.width, this.screenH || this.logicalH || this.canvas.height)
   }
 
   /** Run the painter into the offscreen canvas and flag the texture for upload. */
@@ -263,7 +276,7 @@ export class CathodeSurface {
    * the point lands outside the drawn content (the barrel's transparent margin).
    */
   contentPoint(u: number, v: number): { x: number; y: number } | null {
-    const l = lensUV(u, v, this.mouse, this.look.magnify, this.logicalW, this.logicalH)
+    const l = lensUV(u, v, this.mouse, this.look.magnify, this.screenW || this.logicalW, this.screenH || this.logicalH)
     const c = barrelUV(l.x, l.y, curvatureToStrength(this.look.curvature))
     if (c.x < 0 || c.x > 1 || c.y < 0 || c.y > 1) return null
     return { x: c.x * this.logicalW, y: (1 - c.y) * this.logicalH }

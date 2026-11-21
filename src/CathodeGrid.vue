@@ -13,11 +13,8 @@ import {
   aggregate, AGG_ROW_H,
   wrapTextLines, rowHeightFor, buildRowOffsets, rowAtOffset, gridCellFont,
 } from './CanvasGrid'
-import {
-  LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
-  createLensUniforms, writeLensUniforms, eventToLensUV,
-  LENS_INACTIVE, type MouseLensUV, curvatureToStrength, fieldScale,
-} from './lensShader'
+import { CathodeSurface } from './CathodeSurface'
+import { eventToLensUV, curvatureToStrength, fieldScale } from './lensShader'
 import './cathode.css'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -115,10 +112,6 @@ const selectedCell  = ref<{ row: number, col: number } | null>(null)
 // collapses the selection by writing both anchor and active to the same cell.
 const selectionAnchor = ref<{ row: number, col: number } | null>(null)
 const activeFilter  = ref<string | null>(null)
-
-// Lens-on-hover state — mouse position in shader UV space (Three.js
-// convention: y=1 at top). LENS_INACTIVE = (-999,-999) = lens not drawn.
-const mouseLensUV: MouseLensUV = { ...LENS_INACTIVE }
 
 // Filter popup — drawn INTO the offscreen canvas (overlay surface, 0.6) so it
 // warps with the panel; a hidden real <input> (the "ghost") carries focus, IME,
@@ -550,84 +543,42 @@ function releaseRenderer() {
 }
 let scene:       THREE.Scene
 let camera:      THREE.OrthographicCamera
-let material:    THREE.ShaderMaterial
-let texture:     THREE.CanvasTexture
-let offCanvas:   HTMLCanvasElement
 
-const VERT = `
-  varying vec2 vUv;
-  void main() {
-    vUv         = uv;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
-  }
-`
-
-const FRAG = `
-  uniform sampler2D uTex;
-  uniform float     uStrength;   // barrel strength 0..~0.55
-  uniform float     uScanlines;  // 1.0 = on
-  uniform float     uVignette;   // 1.0 = on  (off for paper theme)
-  uniform vec3      uBezel;      // bezel / outside-screen colour
-  ${LENS_FRAG_UNIFORMS}
-
-  varying vec2 vUv;
-
-  vec2 barrel(vec2 uv) {
-    // Signed bend: magnitude from |strength|, direction applied after.
-    // CONVEX (+): classic barrel — corners sample past the texture → bezel.
-    // CONCAVE (−): the full 0.5.0 dish, plus a fit-to-content rescale. The
-    // raw inward map samples a shrunken region, so the texture's outer
-    // margin (headers, edge columns) was never displayed at high strength.
-    // Scaling the sampled field so the screen CORNERS land exactly on the
-    // texture corners guarantees every content pixel is drawn; the sampled
-    // range then overshoots [0,1] at the edge MIDPOINTS, which renders as
-    // the classic pincushion silhouette — content pinching inward on each
-    // side, corners touching, the header riding the bowed top edge.
-    vec2  cc   = uv - 0.5;
-    float as   = abs(uStrength);
-    float dist = dot(cc, cc) * as;
-    vec2  m    = cc + cc * (1.0 + dist) * dist * sign(uStrength);
-    if (uStrength < 0.0) {
-      float cd = 0.5 * as;                        // corner dist = |cc|²·as at (.5,.5)
-      float cp = 0.5 * (1.0 + cd) * cd;           // corner inward pull
-      m /= (1.0 - 2.0 * cp);                      // corners → exactly ±0.5
-    }
-    return vec2(0.5) + m;
-  }
-
-  ${LENS_FRAG_FN}
-
-  void main() {
-    vec2 lensUV = applyLens(vUv);
-    vec2 uv     = barrel(lensUV);
-
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-      gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
-      return;
-    }
-
-    vec4 color = texture2D(uTex, uv);
-
-    if (uScanlines > 0.5) {
-      if (mod(gl_FragCoord.y, 2.0) < 1.0) color.rgb *= 0.87;
-    }
-
-    if (uVignette > 0.5) {
-      vec2  vc   = uv - 0.5;
-      float vign = 1.0 - dot(vc, vc) * 0.6;   // softened falloff — see CathodeLog for rationale
-      color.rgb  *= clamp(vign, 0.0, 1.0);
-    }
-
-    ${LENS_FRAG_RING}
-
-    gl_FragColor = color;
-  }
-`
+// The CathodeSurface owns the offscreen canvas, its CanvasTexture and the barrel / scanlines /
+// vignette / lens shader; this component supplies the renderer + orthographic camera that present
+// it full-screen. The painter is the SAME for the WebGL and the 2D-fallback path (the fallback
+// just passes glow=false), so the two can't drift apart.
+const surface = new CathodeSurface({
+  paint: (canvas, { dpr: d, glow }) => {
+    drawGrid(canvas, {
+      cols:        displayCols.value,
+      rows:        filteredRows.value,
+      pinnedRows:  localPinned.value,
+      rowHeight:   props.rowHeight,
+      // Per-row variable heights for `wrap` columns.
+      rowHeights:  rowHeights.value ?? undefined,
+      scrollY:     scrollY.value,
+      scrollX:     scrollX.value,
+      theme:       props.theme,
+      glow,
+      sorts:       sortState.value,
+      colFilters,
+      hoveredRow:  hoveredRow.value,
+      selectedRow: selectedCell.value?.row ?? -1,
+      selectedCol: selectedCell.value?.col ?? -1,
+      selectionAnchorRow: selectionAnchor.value?.row ?? -1,
+      selectionAnchorCol: selectionAnchor.value?.col ?? -1,
+      formatCell,
+      getCellStyle,
+      aggregateRow: aggregateRow.value,
+      dpr: d,
+    })
+    drawPopupOverlay(canvas, d)
+  },
+})
 
 function initThree() {
   if (!canvasEl.value || !wrapEl.value) return
-
-  offCanvas = document.createElement('canvas')
 
   try {
     renderer = new THREE.WebGLRenderer({ canvas: canvasEl.value, antialias: false, alpha: true })
@@ -640,7 +591,7 @@ function initThree() {
     webglFailed = true
   }
   if (webglFailed) {
-    // No WebGL — fall back to direct 2D blit; still set up offCanvas dimensions
+    // No WebGL — fall back to direct 2D blit; still set up the surface canvas dimensions
     sizeToContainer()
     return
   }
@@ -649,27 +600,8 @@ function initThree() {
 
   scene  = new THREE.Scene()
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
-
-  texture = new THREE.CanvasTexture(offCanvas)
-  texture.minFilter = THREE.LinearFilter
-  texture.magFilter = THREE.LinearFilter
   // flipY=true (default): canvas row 0 (top) → texture UV y=1 ✓
-
-  material = new THREE.ShaderMaterial({
-    uniforms: {
-      uTex:       { value: texture },
-      uStrength:  { value: 0.0 },
-      uScanlines: { value: 1.0 },
-      uVignette:  { value: 1.0 },
-      uBezel:     { value: new THREE.Color(0x000000) },
-      ...createLensUniforms(),
-    },
-    vertexShader:   VERT,
-    fragmentShader: FRAG,
-    transparent:    true,
-  })
-
-  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material))
+  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), surface.material))
 
   sizeToContainer()
 }
@@ -688,31 +620,19 @@ function sizeToContainer() {
   // the warp absorbs — extra columns slide in as the panel bends.
   const contentW = props.bendField ? Math.round(W * fieldScale(props.curvature)) : W
 
-  // If offCanvas dimensions change, the CanvasTexture's GPU storage is stale —
-  // Three.js will try to texSubImage2D into the old (smaller) allocation and
-  // the driver throws GL_INVALID_VALUE: 'Offset overflows texture dimensions',
-  // producing garbled pixel output. Dispose the texture so Three.js
-  // reallocates GPU storage on the next render.
-  dpr = Math.min(window.devicePixelRatio || 1, 2) // re-read (monitor may have changed)
   // Backing store at physical resolution (× dpr); canvasW/canvasH stay LOGICAL (layout/scroll/hit-test).
-  const bw = Math.round(contentW * dpr), bh = Math.round(H * dpr)
-  const sizeChanged = offCanvas.width !== bw || offCanvas.height !== bh
-  offCanvas.width  = bw
-  offCanvas.height = bh
+  // surface.resize() re-reads the device pixel ratio (the monitor may have changed) and, when the
+  // size changes, re-creates the CanvasTexture so three.js reallocates GPU storage — a stale
+  // allocation makes it texSubImage2D past the old bounds (GL_INVALID_VALUE, garbled pixels).
+  surface.resize(contentW, H)
+  surface.setScreenSize(W, H)
+  dpr = surface.dpr
   canvasW.value    = contentW
   canvasH.value    = H
   scrollX.value    = Math.max(0, Math.min(maxScrollX.value, scrollX.value))
   scrollY.value    = Math.max(0, Math.min(maxScrollY.value, scrollY.value))
 
   if (renderer) {
-    if (sizeChanged && texture) {
-      texture.dispose()
-      // Re-create so Three.js allocates fresh GPU storage at the new size
-      texture = new THREE.CanvasTexture(offCanvas)
-      texture.minFilter = THREE.LinearFilter
-      texture.magFilter = THREE.LinearFilter
-      if (material) material.uniforms.uTex.value = texture
-    }
     // Track DPR so zooming the browser page keeps the canvas crisp.
     renderer.setPixelRatio(dpr)
     // Update the WebGL pixel buffer AND the canvas CSS size together.
@@ -731,88 +651,40 @@ function sizeToContainer() {
 // ── Redraw ────────────────────────────────────────────────────────────────────
 
 function redraw() {
-  if (!offCanvas?.width) return
+  if (!surface.canvas.width) return
 
-  // WebGL fallback: draw offCanvas directly to the visible canvas via 2D blit
+  // WebGL fallback: paint the surface canvas (no glow) and blit it to the visible canvas via 2D
   if (webglFailed) {
     if (!canvasEl.value) return
-    drawGrid(offCanvas, {
-      cols:        displayCols.value,
-      rows:        filteredRows.value,
-      pinnedRows:  localPinned.value,
-      rowHeight:   props.rowHeight,
-      rowHeights:  rowHeights.value ?? undefined,
-      scrollY:     scrollY.value,
-      scrollX:     scrollX.value,
-      theme:       props.theme,
-      glow:        false,
-      sorts:       sortState.value,
-      colFilters,
-      hoveredRow:  hoveredRow.value,
-      selectedRow: selectedCell.value?.row ?? -1,
-      selectedCol: selectedCell.value?.col ?? -1,
-      selectionAnchorRow: selectionAnchor.value?.row ?? -1,
-      selectionAnchorCol: selectionAnchor.value?.col ?? -1,
-      formatCell,
-      getCellStyle,
-      dpr,
-    })
-    drawPopupOverlay()
+    surface.paintOnly(false)
+    const off = surface.canvas
     const ctx2d = canvasEl.value.getContext('2d')
     // fallback has no warp — squeeze the (possibly wider) content uniformly
-    if (ctx2d) ctx2d.drawImage(offCanvas, 0, 0, offCanvas.width, offCanvas.height, 0, 0, canvasEl.value.width, canvasEl.value.height)
+    if (ctx2d) ctx2d.drawImage(off, 0, 0, off.width, off.height, 0, 0, canvasEl.value.width, canvasEl.value.height)
     return
   }
 
-  if (!renderer || !material || !texture) return
+  if (!renderer) return
 
-  const themeColors = THEME_COLORS[props.theme] ?? THEME_COLORS['none']
-  const isPaper     = props.theme === 'paper'
-
-  material.uniforms.uStrength.value  = curvatureToStrength(props.curvature)
-  material.uniforms.uScanlines.value = (props.scanlines && !isPaper) ? 1.0 : 0.0
-  material.uniforms.uVignette.value  = isPaper ? 0.0 : 1.0
-  ;(material.uniforms.uBezel.value as THREE.Color).set(themeColors.bg)
-
-  writeLensUniforms(material, props.magnify, mouseLensUV, screenW.value || offCanvas.width, screenH.value || offCanvas.height)
-
-  drawGrid(offCanvas, {
-    cols:        displayCols.value,
-    rows:        filteredRows.value,
-    pinnedRows:  localPinned.value,
-    rowHeight:   props.rowHeight,
-    // Per-row variable heights for `wrap` columns — the MAIN WebGL path had drifted from
-    // the fallback path (line ~669) and dropped this, so wrapped rows never grew on-screen.
-    rowHeights:  rowHeights.value ?? undefined,
-    scrollY:     scrollY.value,
-    scrollX:     scrollX.value,
-    theme:       props.theme,
-    glow:        props.glow,
-    sorts:       sortState.value,
-    colFilters,
-    hoveredRow:  hoveredRow.value,
-    selectedRow: selectedCell.value?.row ?? -1,
-    selectedCol: selectedCell.value?.col ?? -1,
-    selectionAnchorRow: selectionAnchor.value?.row ?? -1,
-    selectionAnchorCol: selectionAnchor.value?.col ?? -1,
-    formatCell,
-    getCellStyle,
-    aggregateRow: aggregateRow.value,
-    dpr,
+  const isPaper = props.theme === 'paper'
+  surface.setLook({
+    curvature: props.curvature,
+    scanlines: props.scanlines && !isPaper,
+    vignette:  !isPaper,
+    magnify:   props.magnify,
   })
-
-  drawPopupOverlay()
-  texture.needsUpdate = true
+  surface.syncUniforms()
+  surface.paint(props.glow)
   renderer.render(scene, camera)
 }
 
-// Draw the filter popup into offCanvas after the body pass — it rides the warp.
-function drawPopupOverlay() {
-  if (!activeFilter.value || !offCanvas?.width) return
-  const ctx = offCanvas.getContext('2d')
+// Draw the filter popup into the surface canvas after the body pass — it rides the warp.
+function drawPopupOverlay(canvas: HTMLCanvasElement, d: number) {
+  if (!activeFilter.value || !canvas.width) return
+  const ctx = canvas.getContext('2d')
   if (!ctx) return
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // draw the popup in LOGICAL coords at physical res (rides the warp)
-  filterLayout = layoutFilterPopup(offCanvas.width / dpr, filterAnchorX.value, !!filterPopupValue.value)
+  ctx.setTransform(d, 0, 0, d, 0, 0) // draw the popup in LOGICAL coords at physical res (rides the warp)
+  filterLayout = layoutFilterPopup(canvas.width / d, filterAnchorX.value, !!filterPopupValue.value)
   const colors = THEME_COLORS[props.theme] ?? THEME_COLORS['none']
   drawFilterPopup(ctx, filterLayout, filterPopupValue.value, caretOn.value, colors)
 }
@@ -832,8 +704,8 @@ function canvasXYAt(clientX: number, clientY: number): [number, number] {
   const W        = rect.width
   const H        = rect.height
   const strength = curvatureToStrength(props.curvature)
-  // texture dims in LOGICAL px (offCanvas backing store is now × dpr) so results match layout coords
-  const [cx, cy] = screenToCanvas(sx, sy, W, H, strength, (offCanvas.width / dpr) || W, (offCanvas.height / dpr) || H)
+  // texture dims in LOGICAL px (the surface canvas backing store is × dpr) so results match layout coords
+  const [cx, cy] = screenToCanvas(sx, sy, W, H, strength, (surface.canvas.width / dpr) || W, (surface.canvas.height / dpr) || H)
   return cx < 0 ? [-1, -1] : [cx, cy]
 }
 function canvasCoords(e: MouseEvent): [number, number] {
@@ -892,9 +764,7 @@ function onCanvasMouseMove(e: MouseEvent) {
 
   // Lens tracking — update mouse UV when lens is enabled.
   if (props.magnify && canvasEl.value) {
-    const uv = eventToLensUV(e, canvasEl.value)
-    mouseLensUV.x = uv.x
-    mouseLensUV.y = uv.y
+    surface.setLens(eventToLensUV(e, canvasEl.value))
   }
 
   const [cx, cy] = canvasCoords(e)
@@ -938,8 +808,7 @@ function onCanvasMouseMove(e: MouseEvent) {
 
 function onCanvasMouseLeave() {
   hoveredRow.value = -1
-  mouseLensUV.x = LENS_INACTIVE.x
-  mouseLensUV.y = LENS_INACTIVE.y
+  surface.setLens(null)
   redraw()
 }
 
@@ -1346,7 +1215,7 @@ watch(() => [props.curvature, props.bendField], () => nextTick(sizeToContainer))
 watch(() => props.scanlines, () => redraw())
 watch(() => props.glow,      () => redraw())
 watch(() => props.magnify,   (on) => {
-  if (!on) { mouseLensUV.x = LENS_INACTIVE.x; mouseLensUV.y = LENS_INACTIVE.y }
+  if (!on) surface.setLens(null)
   redraw()
 })
 
@@ -1436,6 +1305,7 @@ onUnmounted(() => {
   window.visualViewport?.removeEventListener('resize', scheduleResize)
   cancelAnimationFrame(resizeRaf)
   releaseRenderer()
+  surface.dispose()
 })
 
 // ── Computed styles ───────────────────────────────────────────────────────────

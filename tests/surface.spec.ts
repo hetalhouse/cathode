@@ -51,4 +51,32 @@ test.describe('CathodeSurface', () => {
     await page.waitForTimeout(500);
     expect(watch.entries, `console emitted GL/page errors:\n${JSON.stringify(watch.entries, null, 2)}`).toEqual([]);
   });
+
+  test('barrelUV matches the grid\'s own applyBarrel (hit-test parity)', async ({ page }) => {
+    await page.goto('/surface3d.html');
+    const r = await page.evaluate(async () => {
+      const a = await import('/src/CathodeSurface.ts');
+      const b = await import('/src/CanvasGrid.ts');
+      const worst = (curvs: number[], axes: ('x' | 'y')[]) => {
+        let max = 0;
+        for (const curv of curvs) {
+          const strength = (curv / 45) * 0.55;
+          for (let i = 0; i <= 10; i++) for (let j = 0; j <= 10; j++) {
+            const u = i / 10, v = j / 10;
+            const m = a.barrelUV(u, v, strength);
+            const [gx, gy] = b.applyBarrel(u, v, strength);
+            if (axes.includes('x')) max = Math.max(max, Math.abs(m.x - gx));
+            if (axes.includes('y')) max = Math.max(max, Math.abs(m.y - gy));
+          }
+        }
+        return max;
+      };
+      return { flatConcave: worst([-45, -20, 0], ['x', 'y']), convexX: worst([15, 45], ['x']) };
+    });
+    expect(r.flatConcave).toBeLessThan(1e-9);
+    expect(r.convexX).toBeLessThan(1e-9);
+    // NOTE: convex Y is deliberately not asserted. CanvasGrid.applyBarrel still scales Y by 0.15
+    // ("legacy convex quirk") while the shader (and CathodeSurface.barrelUV) apply the full bend —
+    // a pre-existing grid hit-test mismatch on convex panels, tracked separately.
+  });
 });
