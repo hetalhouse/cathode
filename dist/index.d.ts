@@ -23,6 +23,6 @@ export { createSurfaceMesh, resizeSurfaceMesh } from './surfaceMesh';
 export { useGridModel } from './useGridModel';
 export type { GridModel, GridModelOptions, GridHost, GridEmit, GridPointer, GridPaintOpts, SortKey } from './useGridModel';
 export { CathodeStage3D, Panel3D } from './CathodeStage3D';
-export type { CathodeStage3DOptions, PanelOptions, PanelLayout, StagePick, StageControls } from './CathodeStage3D';
+export type { CathodeStage3DOptions, PanelOptions, PanelLayout, StagePick, StageControls, StageCameraPose } from './CathodeStage3D';
 export { gridContent, surfaceContent } from './panelContent';
 export type { PanelContent, PanelPointerEvent, PanelPointerKind, GridContentOptions } from './panelContent';
