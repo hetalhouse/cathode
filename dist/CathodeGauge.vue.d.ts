@@ -49,11 +49,11 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     scanlines: boolean;
     magnify: boolean;
     theme: "none" | "phosphor" | "amber" | "paper";
-    animate: boolean;
     leftLabel: string;
     rightLabel: string;
     sideLetters: [string, string];
     marks: GaugeMark[];
     items: GaugeItem[];
+    animate: boolean;
 }, {}, {}, {}, string, import("vue").ComponentProvideOptions, false, {}, any>;
 export default _default;

@@ -82,9 +82,9 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     curvature: number;
     scanlines: boolean;
     magnify: boolean;
+    theme: "none" | "phosphor" | "amber" | "paper";
     pagination: boolean;
     paginationPageSize: number;
-    theme: "none" | "phosphor" | "amber" | "paper";
     bendField: boolean;
 }, {}, {}, {}, string, import("vue").ComponentProvideOptions, false, {}, any>;
 export default _default;
