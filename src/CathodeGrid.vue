@@ -1,19 +1,14 @@
 <script setup lang="ts">
 import {
-  ref, reactive, computed, watch, inject, onMounted, onUnmounted, nextTick,
+  ref, computed, watch, inject, onMounted, onUnmounted, nextTick,
 } from 'vue'
 import type { CSSProperties, Ref } from 'vue'
 import * as THREE from 'three'
-import type { ColDef, ColState, GridApi, ResolvedCol } from './types'
-import {
-  drawGrid, hitTest,
-  isOnFilterIcon, isOnResizeHandle, colLeft,
-  layoutFilterPopup, drawFilterPopup, hitFilterPopup, type FilterPopupLayout,
-  HEADER_H, THEME_COLORS, screenToCanvas,
-  aggregate, AGG_ROW_H,
-  wrapTextLines, rowHeightFor, buildRowOffsets, rowAtOffset, gridCellFont,
-} from './CanvasGrid'
+import type { ColDef, GridApi } from './types'
+import { THEME_COLORS, screenToCanvas } from './CanvasGrid'
 import { CathodeSurface } from './CathodeSurface'
+import { useGridModel } from './useGridModel'
+import type { GridEmit, GridPointer } from './useGridModel'
 import { eventToLensUV, curvatureToStrength, fieldScale } from './lensShader'
 import './cathode.css'
 
@@ -81,437 +76,37 @@ const emit = defineEmits<{
   'filter-changed':   []
 }>()
 
-// ── Grid data state ───────────────────────────────────────────────────────────
+// ── The grid model ────────────────────────────────────────────────────────────
+// All grid state and behaviour (columns, rows, sort/filter, scroll, selection, the filter popup,
+// column resize, keyboard nav, the GridApi, the paint call) lives in the headless model — see
+// useGridModel.ts. This component is the DOM presenter: it owns the canvas, the renderer, the
+// surface, the observers and the ghost <input>, and maps DOM events into the model's canvas space.
 
-const localRowData  = ref<any[]>(props.rowData ?? [])
-const localPinned   = ref<any[]>(props.pinnedBottomRowData ?? [])
-const quickFilter   = ref('')
-/** Ordered sort criteria — index 0 is the primary key. Shift-click appends. */
-const sortState     = ref<{ colId: string, dir: 'asc' | 'desc' }[]>([])
-const colFilters    = reactive<Record<string, string>>({})
-const colWidths     = reactive<Record<string, number>>({})   // hint-space overrides
-const hiddenCols    = reactive(new Set<string>())
-const refreshKey    = ref(0)
+const filterGhostEl = ref<HTMLInputElement | null>(null)
 
-// ── Canvas dimensions (set by sizeToContainer) ────────────────────────────────
-
-const canvasW = ref(0)   // CONTENT width (≥ screen width under bendField)
-const canvasH = ref(0)
-const screenW = ref(0)   // visible panel dims (the warp squeezes content into these)
-const screenH = ref(0)
-
-// ── Interaction state ─────────────────────────────────────────────────────────
-
-const scrollY       = ref(0)   // vertical offset (px)
-const scrollX       = ref(0)   // horizontal offset (px)
-const hoveredRow    = ref(-1)
-const selectedCell  = ref<{ row: number, col: number } | null>(null)
-// Anchor for Excel-style range selection. Shift-arrow / shift-click moves
-// `selectedCell` (the active cursor) while leaving the anchor in place;
-// the rectangle between them is the selection. Plain arrow/click
-// collapses the selection by writing both anchor and active to the same cell.
-const selectionAnchor = ref<{ row: number, col: number } | null>(null)
-const activeFilter  = ref<string | null>(null)
-
-// Filter popup — drawn INTO the offscreen canvas (overlay surface, 0.6) so it
-// warps with the panel; a hidden real <input> (the "ghost") carries focus, IME,
-// and keystrokes while the glyphs + caret are ours. filterAnchorX is the
-// popup's canvas-space anchor (column left, viewport coords).
-const filterPopupValue = ref('')
-const filterAnchorX    = ref(0)
-const filterGhostEl    = ref<HTMLInputElement | null>(null)
-let   filterLayout: FilterPopupLayout | null = null
-const caretOn = ref(true)
-let caretTimer: ReturnType<typeof setInterval> | null = null
-watch(activeFilter, (open) => {
-  if (caretTimer) { clearInterval(caretTimer); caretTimer = null }
-  if (open) {
-    caretOn.value = true
-    caretTimer = setInterval(() => { caretOn.value = !caretOn.value; redraw() }, 530)
-    nextTick(() => filterGhostEl.value?.focus())
-  } else {
-    filterLayout = null
-    filterGhostEl.value?.blur()
-  }
-  redraw()
+const model = useGridModel({
+  columnDefs:          () => props.columnDefs,
+  defaultColDef:       () => props.defaultColDef,
+  rowData:             () => props.rowData,
+  pinnedBottomRowData: () => props.pinnedBottomRowData,
+  rowHeight:           () => props.rowHeight,
+  theme:               () => props.theme,
+  emit:                emit as unknown as GridEmit,
+  host: {
+    redraw:           () => redraw(),
+    resize:           () => sizeToContainer(),
+    focusCanvas:      () => canvasEl.value?.focus(),
+    focusFilterInput: () => filterGhostEl.value?.focus(),
+    blurFilterInput:  () => filterGhostEl.value?.blur(),
+  },
 })
 
-// ── Column ID helper ──────────────────────────────────────────────────────────
-
-function colIdOf(def: ColDef): string {
-  return (
-    def.colId
-    ?? def.field
-    ?? (def.headerName ? def.headerName.toLowerCase().replace(/\s+/g, '_') : undefined)
-    ?? `col_${Math.random().toString(36).slice(2, 7)}`
-  )
-}
-
-// ── resolvedCols — applies user-set width overrides (hint-space) ───────────────
-
-const resolvedCols = computed<ResolvedCol[]>(() => {
-  const defaults = props.defaultColDef ?? {}
-  return props.columnDefs
-    .filter(def => !hiddenCols.has(colIdOf(def)))
-    .map(def => {
-      const colId  = colIdOf(def)
-      const merged = { ...defaults, ...def } as ColDef
-      return { colId, colDef: merged, width: colWidths[colId] ?? merged.width ?? 100 }
-    })
-})
-
-/**
- * displayCols — columns scaled so they EXACTLY fill canvasW.
- *
- * Only scales UP when columns are narrower than the canvas.
- * When columns exceed canvas width, natural widths are used and horizontal
- * scroll handles navigation.
- */
-const displayCols = computed<ResolvedCol[]>(() => {
-  const W = canvasW.value
-  if (!W) return resolvedCols.value
-
-  const totalHint = resolvedCols.value.reduce((s, c) => s + c.width, 0)
-  if (!totalHint) return resolvedCols.value
-
-  if (totalHint >= W) return resolvedCols.value
-
-  const scale = W / totalHint
-  let used = 0
-  return resolvedCols.value.map((c, i) => {
-    const isLast = i === resolvedCols.value.length - 1
-    const w = isLast ? W - used : Math.max(8, Math.round(c.width * scale))
-    used += w
-    return { ...c, width: w }
-  })
-})
-
-const maxScrollX = computed(() => {
-  const totalW = displayCols.value.reduce((s, c) => s + c.width, 0)
-  return Math.max(0, totalW - canvasW.value)
-})
-
-// ── Variable row height (word-wrap columns) ───────────────────────────────────
-// A grid with no `wrap` column has rowHeights=null and every geometry helper
-// below falls back to the uniform props.rowHeight — zero behaviour change. Only
-// when a column declares `wrap: true` do rows grow to fit their wrapped text.
-
-let _measureCanvas: HTMLCanvasElement | null = null
-function measureCtx(): CanvasRenderingContext2D | null {
-  if (typeof document === 'undefined') return null
-  if (!_measureCanvas) _measureCanvas = document.createElement('canvas')
-  const ctx = _measureCanvas.getContext('2d')
-  if (ctx) ctx.font = gridCellFont()   // identical font to the renderer's cell draw
-  return ctx
-}
-
-const hasWrapCol = computed(() => displayCols.value.some(c => c.colDef.wrap))
-
-// Per-row heights parallel to filteredRows; null when no wrap column exists.
-const rowHeights = computed<number[] | null>(() => {
-  if (!hasWrapCol.value) return null
-  const ctx = measureCtx()
-  if (!ctx) return null
-  const wrapCols = displayCols.value.filter(c => c.colDef.wrap)
-  const base = props.rowHeight
-  return filteredRows.value.map(row => {
-    let maxLines = 1
-    for (const col of wrapCols) {
-      const lines = wrapTextLines(ctx, formatCell(col, row), Math.max(20, col.width - 16))
-      if (lines.length > maxLines) maxLines = lines.length
-    }
-    return rowHeightFor(maxLines, base)
-  })
-})
-
-const rowOffsets = computed<number[] | null>(() =>
-  rowHeights.value ? buildRowOffsets(rowHeights.value, filteredRows.value.length) : null
-)
-
-const totalRowsH = computed(() =>
-  rowOffsets.value
-    ? rowOffsets.value[filteredRows.value.length]
-    : filteredRows.value.length * props.rowHeight
-)
-
-// ── Viewport geometry ─────────────────────────────────────────────────────────
-
-const bodyH = computed(() => {
-  const pinnedH = localPinned.value.length * props.rowHeight
-  return Math.max(0, canvasH.value - HEADER_H - pinnedH)
-})
-
-const maxScrollY = computed(() =>
-  Math.max(0, totalRowsH.value - bodyH.value)
-)
-
-const visibleRowCount = computed(() =>
-  Math.max(1, Math.floor(bodyH.value / props.rowHeight))
-)
-
-const firstVisibleRow = computed(() => {
-  const n = filteredRows.value.length
-  if (n === 0) return 0
-  const idx = rowOffsets.value
-    ? rowAtOffset(rowOffsets.value, scrollY.value)
-    : Math.floor(scrollY.value / props.rowHeight)
-  return Math.min(n - 1, idx)
-})
-
-const lastVisibleRow = computed(() => {
-  const n = filteredRows.value.length
-  if (n === 0) return 0
-  if (rowOffsets.value)
-    return Math.min(n - 1, rowAtOffset(rowOffsets.value, scrollY.value + bodyH.value - 1))
-  return Math.min(n - 1, firstVisibleRow.value + visibleRowCount.value - 1)
-})
-
-// ── Cell value / format helpers ───────────────────────────────────────────────
-
-function getCellValue(row: any, col: ResolvedCol): any {
-  if (col.colDef.valueGetter) return col.colDef.valueGetter({ data: row, colDef: col.colDef })
-  if (col.colDef.field)       return row[col.colDef.field]
-  return undefined
-}
-
-function formatCell(col: ResolvedCol, row: any): string {
-  const value = getCellValue(row, col)
-  if (col.colDef.valueFormatter)
-    return col.colDef.valueFormatter({ value, data: row, colDef: col.colDef }) ?? ''
-  if (col.colDef.cellRenderer) {
-    const html = col.colDef.cellRenderer({ value, data: row, colDef: col.colDef }) ?? ''
-    return html.replace(/<[^>]+>/g, '')        // strip HTML → plain text for canvas
-  }
-  return value == null ? '' : String(value)
-}
-
-function getCellStyle(col: ResolvedCol, row: any): CSSProperties {
-  if (!col.colDef.cellStyle) return {}
-  if (typeof col.colDef.cellStyle === 'function')
-    return col.colDef.cellStyle({ value: getCellValue(row, col), data: row, colDef: col.colDef }) ?? {}
-  return col.colDef.cellStyle
-}
-
-/** Initial sort from columnDefs — `sortIndex` orders them, else column order. */
-function initialSorts(): { colId: string, dir: 'asc' | 'desc' }[] {
-  return props.columnDefs
-    .map((d, i) => ({ d, i }))
-    .filter(({ d }) => d.sort)
-    .sort((a, b) => (a.d.sortIndex ?? a.i) - (b.d.sortIndex ?? b.i))
-    .map(({ d }) => ({ colId: colIdOf(d), dir: d.sort! }))
-}
-
-// ── Filter + sort + paging ────────────────────────────────────────────────────
-
-const filteredRows = computed<any[]>(() => {
-  void refreshKey.value
-  let rows = localRowData.value
-
-  const q = quickFilter.value.trim().toLowerCase()
-  if (q) {
-    rows = rows.filter(row =>
-      resolvedCols.value.some(col =>
-        String(getCellValue(row, col) ?? '').toLowerCase().includes(q)
-      )
-    )
-  }
-
-  for (const [colId, raw] of Object.entries(colFilters)) {
-    if (!raw) continue
-    const col = resolvedCols.value.find(c => c.colId === colId)
-    if (!col) continue
-    if (raw.startsWith('__eq__')) {
-      const t = raw.slice(6).toLowerCase()
-      rows = rows.filter(r => String(getCellValue(r, col) ?? '').toLowerCase() === t)
-    } else {
-      const t = raw.toLowerCase()
-      rows = rows.filter(r => String(getCellValue(r, col) ?? '').toLowerCase().includes(t))
-    }
-  }
-
-  const sortKeys = sortState.value
-    .map(({ colId, dir }) => ({ col: resolvedCols.value.find(c => c.colId === colId), dir }))
-    .filter((k): k is { col: ResolvedCol, dir: 'asc' | 'desc' } => !!k.col)
-  if (sortKeys.length) {
-    rows = [...rows].sort((a, b) => {
-      for (const { col, dir } of sortKeys) {
-        const av = getCellValue(a, col)
-        const bv = getCellValue(b, col)
-        let cmp = 0
-        if (col.colDef.comparator)                               cmp = col.colDef.comparator(av, bv)
-        else if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv
-        else cmp = String(av ?? '').localeCompare(String(bv ?? ''), undefined, { numeric: true })
-        if (cmp) return dir === 'asc' ? cmp : -cmp
-      }
-      return 0
-    })
-  }
-
-  return rows
-})
-
-/**
- * Aggregate row — one entry per column declaring `aggFunc`. Recomputes
- * automatically when filteredRows changes (filter / sort / quickFilter).
- * Returns null when no column requests aggregation, so the renderer can
- * skip drawing the aggregate band entirely.
- */
-const aggregateRow = computed<Record<string, string> | null>(() => {
-  const aggCols = resolvedCols.value.filter(c => c.colDef.aggFunc != null)
-  if (aggCols.length === 0) return null
-
-  const rows = filteredRows.value
-  const out: Record<string, string> = {}
-  for (const col of aggCols) {
-    const values = rows.map(r => getCellValue(r, col))
-    const result = aggregate(values, col.colDef.aggFunc!)
-    if (result === null || result === undefined) {
-      out[col.colId] = ''
-      continue
-    }
-    out[col.colId] = col.colDef.aggValueFormatter
-      ? col.colDef.aggValueFormatter(result)
-      : String(result)
-  }
-  // Mark first aggregated column with a Σ label only if there's no value
-  // there already — purely a "this row is totals" cue.
-  const firstAggColId = aggCols[0].colId
-  if (out[firstAggColId] === '') out[firstAggColId] = 'Σ'
-
-  return out
-})
-
-watch(filteredRows, () => { scrollY.value = 0; selectedCell.value = null })
-watch(maxScrollX,  () => { scrollX.value = Math.min(scrollX.value, maxScrollX.value) })
-watch(maxScrollY,  () => { scrollY.value = Math.min(scrollY.value, maxScrollY.value) })
-
-// Scroll the absolute row index into the visible viewport.
-function ensureRowVisible(absRow: number) {
-  const offs      = rowOffsets.value
-  const rowTop    = offs ? offs[absRow]     : absRow * props.rowHeight
-  const rowBottom = offs ? offs[absRow + 1] : rowTop + props.rowHeight
-  if (rowTop < scrollY.value) {
-    scrollY.value = rowTop
-  } else if (rowBottom > scrollY.value + bodyH.value) {
-    scrollY.value = Math.min(maxScrollY.value, rowBottom - bodyH.value)
-  }
-}
-
-function pageUp() {
-  scrollY.value = Math.max(0, scrollY.value - bodyH.value)
-  redraw()
-}
-
-function pageDown() {
-  scrollY.value = Math.min(maxScrollY.value, scrollY.value + bodyH.value)
-  redraw()
-}
-
-// ── Column resize ─────────────────────────────────────────────────────────────
-// Resize adjusts the PROPORTIONAL width of a column while keeping all columns
-// filling the container.  We convert from display-pixel drag delta to hint-space
-// so that displayCols re-scales correctly.
-
-let resizeActive      = false
-let resizeColId       = ''
-let resizeStartX      = 0
-let resizeStartDispW  = 0   // display width at resize start
-let resizeScale       = 1   // local canvas-px-per-screen-px at the grab (concave shrinks it on screen)
-let wasDragging       = false
-
-// Pan-to-scroll (click+drag in body)
-let panActive       = false
-let panStartX       = 0
-let panStartY       = 0
-let panStartScrollX = 0
-let panStartScrollY = 0
-let panMoved        = false
-
-function startColResize(colId: string, startClientX: number, scale = 1) {
-  resizeActive     = true
-  resizeColId      = colId
-  resizeStartX     = startClientX
-  resizeScale      = scale   // canvas px per screen px at the grab point (distortion-aware)
-  resizeStartDispW = displayCols.value.find(c => c.colId === colId)?.width ?? 100
-  wasDragging      = false
-}
-
-function onGlobalMouseMove(e: MouseEvent) {
-  if (panActive) {
-    const dx = panStartX - e.clientX
-    const dy = panStartY - e.clientY
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) panMoved = true
-
-    scrollX.value = Math.max(0, Math.min(maxScrollX.value, panStartScrollX + dx))
-    scrollY.value = Math.max(0, Math.min(maxScrollY.value, panStartScrollY + dy))
-    redraw()
-    return
-  }
-
-  if (!resizeActive) return
-
-  const W               = canvasW.value
-  const desiredDispW    = Math.max(30, resizeStartDispW + (e.clientX - resizeStartX) * resizeScale)
-  const otherHints      = resolvedCols.value
-    .filter(c => c.colId !== resizeColId)
-    .reduce((s, c) => s + c.width, 0)
-
-  // Solve: desiredDispW * scale = hint, where scale = W / (hint + otherHints)
-  // → hint = (desiredDispW * otherHints) / (W - desiredDispW)
-  const denom = W - desiredDispW
-  if (denom > 10) {
-    colWidths[resizeColId] = Math.max(10, Math.round((desiredDispW * otherHints) / denom))
-  }
-
-  redraw()
-}
-
-function onGlobalMouseUp() {
-  if (panActive) {
-    if (panMoved) wasDragging = true
-    panActive = false
-  }
-  if (resizeActive) {
-    resizeActive = false
-    wasDragging  = true
-    emit('column-resized')
-  }
-}
-
-// ── Touch handlers ─────────────────────────────────────────────────────────
-// Mobile browsers don't fire wheel/mousemove on swipe. Without these the
-// grid is stuck at scrollY=0 on phones and tablets. Mirrors the mouse-drag
-// pan model: capture start position + scroll on touchstart, drive scroll
-// from finger delta on touchmove, clear on touchend.
-function onTouchStart(e: TouchEvent) {
-  if (e.touches.length !== 1) return
-  const t = e.touches[0]
-  panActive       = true
-  panMoved        = false
-  panStartX       = t.clientX
-  panStartY       = t.clientY
-  panStartScrollX = scrollX.value
-  panStartScrollY = scrollY.value
-}
-
-function onTouchMove(e: TouchEvent) {
-  if (!panActive || e.touches.length !== 1) return
-  e.preventDefault()
-  const t  = e.touches[0]
-  const dx = panStartX - t.clientX
-  const dy = panStartY - t.clientY
-  if (Math.abs(dx) > 4 || Math.abs(dy) > 4) panMoved = true
-  scrollX.value = Math.max(0, Math.min(maxScrollX.value, panStartScrollX + dx))
-  scrollY.value = Math.max(0, Math.min(maxScrollY.value, panStartScrollY + dy))
-  redraw()
-}
-
-function onTouchEnd() {
-  if (panActive) {
-    if (panMoved) wasDragging = true
-    panActive = false
-  }
-}
+// What the template reads.
+const {
+  scrollY, maxScrollY, filteredRows, displayCols, selectedCell,
+  firstVisibleRow, lastVisibleRow, activeFilter, filterPopupValue,
+  formatCell, pageUp, pageDown, clearFilter,
+} = model
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 
@@ -546,35 +141,8 @@ let camera:      THREE.OrthographicCamera
 
 // The CathodeSurface owns the offscreen canvas, its CanvasTexture and the barrel / scanlines /
 // vignette / lens shader; this component supplies the renderer + orthographic camera that present
-// it full-screen. The painter is the SAME for the WebGL and the 2D-fallback path (the fallback
-// just passes glow=false), so the two can't drift apart.
 const surface = new CathodeSurface({
-  paint: (canvas, { dpr: d, glow }) => {
-    drawGrid(canvas, {
-      cols:        displayCols.value,
-      rows:        filteredRows.value,
-      pinnedRows:  localPinned.value,
-      rowHeight:   props.rowHeight,
-      // Per-row variable heights for `wrap` columns.
-      rowHeights:  rowHeights.value ?? undefined,
-      scrollY:     scrollY.value,
-      scrollX:     scrollX.value,
-      theme:       props.theme,
-      glow,
-      sorts:       sortState.value,
-      colFilters,
-      hoveredRow:  hoveredRow.value,
-      selectedRow: selectedCell.value?.row ?? -1,
-      selectedCol: selectedCell.value?.col ?? -1,
-      selectionAnchorRow: selectionAnchor.value?.row ?? -1,
-      selectionAnchorCol: selectionAnchor.value?.col ?? -1,
-      formatCell,
-      getCellStyle,
-      aggregateRow: aggregateRow.value,
-      dpr: d,
-    })
-    drawPopupOverlay(canvas, d)
-  },
+  paint: (canvas, { dpr: d, glow }) => model.paint(canvas, { dpr: d, glow }),
 })
 
 function initThree() {
@@ -614,8 +182,6 @@ function sizeToContainer() {
   const W = wrapEl.value.clientWidth
   const H = wrapEl.value.clientHeight - (props.pagination ? PAGINATION_H : 0)
   if (!W || !H) return
-  screenW.value = W
-  screenH.value = H
   // Bend-field gain: the content canvas is WIDER than the screen by the factor
   // the warp absorbs — extra columns slide in as the panel bends.
   const contentW = props.bendField ? Math.round(W * fieldScale(props.curvature)) : W
@@ -627,10 +193,7 @@ function sizeToContainer() {
   surface.resize(contentW, H)
   surface.setScreenSize(W, H)
   dpr = surface.dpr
-  canvasW.value    = contentW
-  canvasH.value    = H
-  scrollX.value    = Math.max(0, Math.min(maxScrollX.value, scrollX.value))
-  scrollY.value    = Math.max(0, Math.min(maxScrollY.value, scrollY.value))
+  model.setViewport(contentW, H, W, H)
 
   if (renderer) {
     // Track DPR so zooming the browser page keeps the canvas crisp.
@@ -678,17 +241,6 @@ function redraw() {
   renderer.render(scene, camera)
 }
 
-// Draw the filter popup into the surface canvas after the body pass — it rides the warp.
-function drawPopupOverlay(canvas: HTMLCanvasElement, d: number) {
-  if (!activeFilter.value || !canvas.width) return
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-  ctx.setTransform(d, 0, 0, d, 0, 0) // draw the popup in LOGICAL coords at physical res (rides the warp)
-  filterLayout = layoutFilterPopup(canvas.width / d, filterAnchorX.value, !!filterPopupValue.value)
-  const colors = THEME_COLORS[props.theme] ?? THEME_COLORS['none']
-  drawFilterPopup(ctx, filterLayout, filterPopupValue.value, caretOn.value, colors)
-}
-
 // ── Canvas coordinate mapping ─────────────────────────────────────────────────
 
 function canvasXYAt(clientX: number, clientY: number): [number, number] {
@@ -726,485 +278,68 @@ function hitScaleX(e: MouseEvent): number {
   return Math.max(1, Math.abs(b - a) / 8)
 }
 
-// ── Mouse wheel ───────────────────────────────────────────────────────────────
+// ── Pointer / keyboard → model ────────────────────────────────────────────────
+// Each handler maps the DOM event into canvas space (through the screen's barrel bend, see
+// canvasXYAt) and hands the model a GridPointer; the model owns what it MEANS.
 
-let lastHScrollTime = 0   // timestamp of last horizontal scroll event
-const H_SCROLL_LOCK_MS = 600   // suppress vertical scroll for this long after horizontal gesture
-
-function onCanvasWheel(e: WheelEvent) {
-  activeFilter.value = null
-  const now = Date.now()
-
-  // Horizontal scroll — any deltaX means the gesture is horizontal.
-  // Lock out vertical scroll for H_SCROLL_LOCK_MS to suppress stray deltaX=0
-  // events that trackpads emit at gesture start/end.
-  if (e.deltaX !== 0) {
-    lastHScrollTime = now
-    scrollX.value = Math.max(0, Math.min(maxScrollX.value, scrollX.value + e.deltaX))
-    redraw()
-    return
-  }
-  if (e.shiftKey && e.deltaY !== 0) {
-    lastHScrollTime = now
-    scrollX.value = Math.max(0, Math.min(maxScrollX.value, scrollX.value + e.deltaY))
-    redraw()
-    return
-  }
-
-  // Still within the horizontal scroll lock window — drop this event entirely
-  if (now - lastHScrollTime < H_SCROLL_LOCK_MS) return
-
-  // Vertical — always smooth pixel scroll regardless of pagination prop
-  scrollY.value = Math.max(0, Math.min(maxScrollY.value, scrollY.value + e.deltaY))
-  redraw()
+function pointerAt(e: MouseEvent): GridPointer {
+  const [cx, cy] = canvasCoords(e)
+  return { cx, cy, hitScale: hitScaleX(e) }
 }
 
+function onCanvasWheel(e: WheelEvent) { model.wheel(e.deltaX, e.deltaY, e.shiftKey) }
+
 function onCanvasMouseMove(e: MouseEvent) {
-  if (resizeActive) return
+  if (model.resizing) return
 
   // Lens tracking — update mouse UV when lens is enabled.
   if (props.magnify && canvasEl.value) {
     surface.setLens(eventToLensUV(e, canvasEl.value))
   }
 
-  const [cx, cy] = canvasCoords(e)
-  if (cx < 0) { hoveredRow.value = -1; redraw(); return }
-
-  if (activeFilter.value && filterLayout) {
-    const zone = hitFilterPopup(cx, cy, filterLayout, hitScaleX(e))
-    if (zone !== 'outside') {
-      hoveredRow.value = -1
-      canvasEl.value!.style.cursor = zone === 'clear' ? 'pointer' : 'text'
-      redraw()
-      return
-    }
-  }
-
-  const hit = hitTest(
-    cx, cy, displayCols.value,
-    filteredRows.value.length, props.rowHeight,
-    scrollY.value, canvasH.value, localPinned.value.length, scrollX.value,
-    aggregateRow.value !== null,
-    rowHeights.value ?? undefined,
-  )
-
-  hoveredRow.value = hit.area === 'body' ? hit.rowIdx : -1
-
-  // Cursor
-  if (hit.area === 'header' && hit.colIdx >= 0) {
-    const col     = displayCols.value[hit.colIdx]
-    const clx     = colLeft(hit.colIdx, displayCols.value)
-    const contentCx = cx + scrollX.value
-    canvasEl.value!.style.cursor =
-      col && isOnResizeHandle(contentCx, clx, col.width, hitScaleX(e)) ? 'col-resize' : 'pointer'
-  } else if (hit.area === 'body') {
-    canvasEl.value!.style.cursor = 'pointer'
-  } else {
-    canvasEl.value!.style.cursor = 'default'
-  }
-
-  redraw()
+  const cursor = model.hover(pointerAt(e))
+  if (cursor && canvasEl.value) canvasEl.value.style.cursor = cursor
 }
 
 function onCanvasMouseLeave() {
-  hoveredRow.value = -1
   surface.setLens(null)
-  redraw()
+  model.leave()
 }
 
-function onCanvasMouseDown(e: MouseEvent) {
-  const [cx, cy] = canvasCoords(e)
-  if (cx < 0) return
-  if (activeFilter.value && filterLayout && hitFilterPopup(cx, cy, filterLayout, hitScaleX(e)) !== 'outside') return
-
-  if (cy >= HEADER_H) {
-    // Body click — start pan. Allow event to bubble so CathodeContainer can
-    // call bringToFront; drag only starts from the title bar so there's no conflict.
-    panActive       = true
-    panMoved        = false
-    panStartX       = e.clientX
-    panStartY       = e.clientY
-    panStartScrollX = scrollX.value
-    panStartScrollY = scrollY.value
-    return
-  }
-
-  const contentCx = cx + scrollX.value
-  const hs = hitScaleX(e)
-  for (let ci = 0; ci < displayCols.value.length; ci++) {
-    const col = displayCols.value[ci]
-    const clx = colLeft(ci, displayCols.value)
-    if (col.colDef.resizable !== false && isOnResizeHandle(contentCx, clx, col.width, hs)) {
-      startColResize(col.colId, e.clientX, hs)
-      return
-    }
-  }
-}
+function onCanvasMouseDown(e: MouseEvent) { model.pointerDown(pointerAt(e), e.clientX, e.clientY) }
 
 function onCanvasClick(e: MouseEvent) {
-  if (wasDragging) { wasDragging = false; return }
-  if (resizeActive) return
-
-  const [cx, cy] = canvasCoords(e)
-  if (cx < 0) { activeFilter.value = null; return }
-
-  // Popup overlay eats its clicks before any grid path (it is drawn on top).
-  if (activeFilter.value && filterLayout) {
-    const zone = hitFilterPopup(cx, cy, filterLayout, hitScaleX(e))
-    if (zone === 'clear') { clearFilter(); return }
-    if (zone !== 'outside') { filterGhostEl.value?.focus(); return }
-    // outside → close, then let the click fall through to the grid as usual
-    activeFilter.value = null
-  }
-
-  const hit = hitTest(
-    cx, cy, displayCols.value,
-    filteredRows.value.length, props.rowHeight,
-    scrollY.value, canvasH.value, localPinned.value.length, scrollX.value,
-    aggregateRow.value !== null,
-    rowHeights.value ?? undefined,
-  )
-
-  // ── Header click — sort or filter ──────────────────────────────────────────
-  if (hit.area === 'header' && hit.colIdx >= 0) {
-    const col       = displayCols.value[hit.colIdx]
-    const clx       = colLeft(hit.colIdx, displayCols.value)
-    const contentCx = cx + scrollX.value
-
-    if (col.colDef.filter && isOnFilterIcon(contentCx, clx, col.width, hitScaleX(e))) {
-      e.stopPropagation()
-      if (activeFilter.value === col.colId) {
-        activeFilter.value = null
-      } else {
-        activeFilter.value     = col.colId
-        filterPopupValue.value = colFilters[col.colId]?.startsWith('__eq__')
-          ? colFilters[col.colId].slice(6)
-          : (colFilters[col.colId] ?? '')
-        // Anchor in viewport canvas coords (content x minus current scroll)
-        filterAnchorX.value    = Math.max(0, clx - scrollX.value)
-      }
-    } else if (col.colDef.sortable !== false) {
-      activeFilter.value = null
-      const cur  = sortState.value.find(k => k.colId === col.colId)
-      const next = !cur ? 'asc' : cur.dir === 'asc' ? 'desc' : null
-      if (e.shiftKey) {
-        // Shift-click: add / flip / drop this column, keep the other keys
-        sortState.value = !cur
-          ? [...sortState.value, { colId: col.colId, dir: 'asc' }]
-          : next
-            ? sortState.value.map(k => k.colId === col.colId ? { colId: k.colId, dir: next } : k)
-            : sortState.value.filter(k => k.colId !== col.colId)
-      } else {
-        // Plain click: reset to this column alone
-        sortState.value = next ? [{ colId: col.colId, dir: next }] : []
-      }
-      emit('sort-changed')
-    }
-    return
-  }
-
-  activeFilter.value = null
-
-  // ── Body click — select cell ───────────────────────────────────────────────
-  if (hit.area === 'body' && hit.rowIdx >= 0 && hit.colIdx >= 0) {
-    const absRow = hit.rowIdx
-    // Shift-click extends the selection: keep the existing anchor (or the
-    // current cell if there isn't one yet) and move the active cell only.
-    if (e.shiftKey && selectedCell.value) {
-      if (!selectionAnchor.value) selectionAnchor.value = { ...selectedCell.value }
-      selectedCell.value = { row: absRow, col: hit.colIdx }
-    } else {
-      selectedCell.value    = { row: absRow, col: hit.colIdx }
-      selectionAnchor.value = { row: absRow, col: hit.colIdx }
-    }
-    canvasEl.value?.focus()
-
-    const row = filteredRows.value[absRow]
-    const col = displayCols.value[hit.colIdx]
-    if (row && col) {
-      emit('row-clicked',   { data: row, event: e })
-      emit('cell-selected', { data: row, row: absRow, col: hit.colIdx, colId: col.colId })
-    }
-  }
+  if (model.click(pointerAt(e), e).stopPropagation) e.stopPropagation()
 }
 
 function onDocClick(e: MouseEvent) {
   if (!activeFilter.value) return
-  // The popup lives IN the canvas now — a canvas click that lands inside the
-  // popup's zones must not count as "outside" (the old DOM popup shielded
-  // itself with @click.stop; the canvas can't, so the doc-level closer maps
-  // the point and checks the zones itself).
-  if (e.target === canvasEl.value && filterLayout) {
-    const [cx, cy] = canvasCoords(e)
-    if (cx >= 0 && hitFilterPopup(cx, cy, filterLayout, hitScaleX(e)) !== 'outside') return
-  }
-  activeFilter.value = null
+  model.docClick(e.target === canvasEl.value ? pointerAt(e) : null)
 }
 
-// ── Scroll selected column into view ─────────────────────────────────────────
-function ensureColVisible(colIdx: number) {
-  if (!canvasW.value) return
-  let colX = 0
-  for (let i = 0; i < colIdx; i++) colX += displayCols.value[i].width
-  const colW      = displayCols.value[colIdx]?.width ?? 0
-  const canvasX   = colX - scrollX.value
-  if (canvasX < 0) {
-    scrollX.value = Math.max(0, colX)
-  } else if (canvasX + colW > canvasW.value) {
-    scrollX.value = Math.min(maxScrollX.value, colX + colW - canvasW.value)
-  }
+function onGlobalMouseMove(e: MouseEvent) { model.globalMove(e.clientX, e.clientY) }
+function onGlobalMouseUp() { model.globalUp() }
+
+// Touch — mobile browsers don't fire wheel/mousemove on swipe; without these the grid is stuck
+// at scrollY=0 on phones and tablets. Mirrors the mouse-drag pan model.
+function onTouchStart(e: TouchEvent) {
+  if (e.touches.length !== 1) return
+  model.panStart(e.touches[0].clientX, e.touches[0].clientY)
 }
-
-// ── Keyboard navigation ───────────────────────────────────────────────────────
-
-function onKeyDown(e: KeyboardEvent) {
-  const cols   = displayCols.value
-  const maxCol = cols.length - 1
-  const maxRow = filteredRows.value.length - 1   // absolute
-
-  if (!selectedCell.value) {
-    if (['ArrowDown','ArrowUp','ArrowLeft','ArrowRight','Tab','Enter'].includes(e.key)) {
-      e.preventDefault()
-      selectedCell.value    = { row: firstVisibleRow.value, col: 0 }
-      selectionAnchor.value = { row: firstVisibleRow.value, col: 0 }
-    }
-    return
-  }
-
-  let { row, col } = selectedCell.value   // row is absolute
-
-  // `extend` = shift-held; we move only the active cell and leave the
-  // anchor where it is, so the selection rectangle grows. Plain moves
-  // collapse the selection by writing the anchor to the new active cell.
-  const goTo = (r: number, c: number, extend = false) => {
-    row = Math.max(0, Math.min(maxRow, r))
-    col = Math.max(0, Math.min(maxCol, c))
-    selectedCell.value = { row, col }
-    if (!extend) selectionAnchor.value = { row, col }
-    ensureRowVisible(row)
-    ensureColVisible(col)
-  }
-
-  switch (e.key) {
-    case 'ArrowDown':  e.preventDefault(); goTo(row + 1, col, e.shiftKey); break
-    case 'ArrowUp':    e.preventDefault(); goTo(row - 1, col, e.shiftKey); break
-
-    case 'ArrowRight':
-      e.preventDefault()
-      if (e.shiftKey) {
-        // Shift-arrow stays on the same row even at the right edge — Excel
-        // doesn't wrap selection. Plain arrow keeps the existing wrap behaviour.
-        goTo(row, col + 1, true)
-      } else {
-        col < maxCol ? goTo(row, col + 1) : goTo(row + 1, 0)
-      }
-      break
-
-    case 'ArrowLeft':
-      e.preventDefault()
-      if (e.shiftKey) {
-        goTo(row, col - 1, true)
-      } else {
-        col > 0 ? goTo(row, col - 1) : goTo(row - 1, maxCol)
-      }
-      break
-
-    case 'Tab':
-      e.preventDefault()
-      // Tab always collapses selection (single-cell editing rhythm) and
-      // wraps at row edges. Shift+Tab is reverse-tab, not range extend.
-      if (!e.shiftKey) { col < maxCol ? goTo(row, col + 1) : goTo(row + 1, 0) }
-      else             { col > 0      ? goTo(row, col - 1) : goTo(row - 1, maxCol) }
-      break
-
-    case 'Enter':
-      e.preventDefault()
-      e.shiftKey ? goTo(row - 1, col) : goTo(row + 1, col)
-      break
-
-    case 'Home':
-      e.preventDefault()
-      if (e.ctrlKey || e.metaKey) goTo(0,   0,      e.shiftKey)
-      else                        goTo(row, 0,      e.shiftKey)
-      break
-
-    case 'End':
-      e.preventDefault()
-      if (e.ctrlKey || e.metaKey) goTo(maxRow, maxCol, e.shiftKey)
-      else                        goTo(row,    maxCol, e.shiftKey)
-      break
-
-    case 'PageDown':
-      e.preventDefault()
-      goTo(Math.min(maxRow, row + visibleRowCount.value), col, e.shiftKey)
-      break
-
-    case 'PageUp':
-      e.preventDefault()
-      goTo(Math.max(0, row - visibleRowCount.value), col, e.shiftKey)
-      break
-
-    case 'Escape':
-      selectedCell.value    = null
-      selectionAnchor.value = null
-      break
-
-    case 'c':
-    case 'C':
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault()
-        copySelectionToClipboard()
-      }
-      break
-  }
+function onTouchMove(e: TouchEvent) {
+  if (!model.panning || e.touches.length !== 1) return
+  e.preventDefault()
+  model.panMove(e.touches[0].clientX, e.touches[0].clientY)
 }
+function onTouchEnd() { model.panEnd() }
 
-// Build a TSV string from the current selection rectangle and write it to
-// the clipboard. TSV is what Excel/Numbers/Sheets paste-targets expect, so
-// the user can Cmd+C from cathode and Cmd+V into a spreadsheet.
-function copySelectionToClipboard() {
-  if (!selectedCell.value) return
-  const cols    = displayCols.value
-  const rows    = filteredRows.value
-  const a       = selectionAnchor.value ?? selectedCell.value
-  const minR    = Math.min(a.row, selectedCell.value.row)
-  const maxR    = Math.max(a.row, selectedCell.value.row)
-  const minC    = Math.min(a.col, selectedCell.value.col)
-  const maxC    = Math.max(a.col, selectedCell.value.col)
+function onKeyDown(e: KeyboardEvent) { model.keyDown(e) }
 
-  const lines: string[] = []
-  for (let r = minR; r <= maxR; r++) {
-    const row = rows[r]
-    if (!row) continue
-    const fields: string[] = []
-    for (let c = minC; c <= maxC; c++) {
-      const col = cols[c]
-      if (!col) continue
-      // Replace embedded tabs / newlines so the TSV stays grid-shaped on paste
-      fields.push(formatCell(col, row).replace(/[\t\r\n]+/g, ' '))
-    }
-    lines.push(fields.join('\t'))
-  }
-  const tsv = lines.join('\n')
-  navigator.clipboard?.writeText(tsv).catch(() => {})
-}
-
-// ── Filter popup ──────────────────────────────────────────────────────────────
-
-function onFilterInput(e: Event) {
-  const val = (e.target as HTMLInputElement).value
-  filterPopupValue.value = val
-  if (val) colFilters[activeFilter.value!] = val
-  else     delete colFilters[activeFilter.value!]
-  emit('filter-changed')
-}
-
-function clearFilter() {
-  if (activeFilter.value) delete colFilters[activeFilter.value]
-  filterPopupValue.value = ''
-  activeFilter.value     = null
-  emit('filter-changed')
-}
-
-// ── Grid API ──────────────────────────────────────────────────────────────────
-
-const gridApi: GridApi = {
-  setGridOption(key: string, value: any) {
-    if      (key === 'rowData')             localRowData.value = value
-    else if (key === 'pinnedBottomRowData') localPinned.value  = value
-    else if (key === 'quickFilterText')     quickFilter.value  = value
-  },
-
-  getColumnState(): ColState[] {
-    return props.columnDefs.map(def => {
-      const colId = colIdOf(def)
-      return {
-        colId,
-        hide:      hiddenCols.has(colId),
-        sort:      sortState.value.find(k => k.colId === colId)?.dir ?? null,
-        sortIndex: sortState.value.some(k => k.colId === colId)
-          ? sortState.value.findIndex(k => k.colId === colId) : null,
-        width:     colWidths[colId] ?? def.width,
-      }
-    })
-  },
-
-  applyColumnState({ state }) {
-    const sorted = state.filter(s => s.sort)
-      .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
-    if (sorted.length) sortState.value = sorted.map(s => ({ colId: s.colId, dir: s.sort! }))
-    for (const s of state) {
-      if (s.hide === true)  hiddenCols.add(s.colId)
-      if (s.hide === false) hiddenCols.delete(s.colId)
-      if (s.width)          colWidths[s.colId] = s.width
-    }
-  },
-
-  setFilterModel(model) {
-    for (const k of Object.keys(colFilters)) delete colFilters[k]
-    if (!model) return
-    for (const [colId, filter] of Object.entries(model)) {
-      if (filter?.type === 'equals') colFilters[colId] = `__eq__${filter.filter}`
-      else if (filter?.filter)       colFilters[colId] = filter.filter
-    }
-  },
-
-  getFilterModel() {
-    const model: Record<string, any> = {}
-    for (const [colId, raw] of Object.entries(colFilters)) {
-      if (!raw) continue
-      model[colId] = raw.startsWith('__eq__')
-        ? { type: 'equals',   filter: raw.slice(6) }
-        : { type: 'contains', filter: raw }
-    }
-    return model
-  },
-
-  async setColumnFilterModel(colId: string, model: any) {
-    if (!model)                       delete colFilters[colId]
-    else if (model.type === 'equals') colFilters[colId] = `__eq__${model.filter}`
-    else                              colFilters[colId] = model.filter ?? ''
-  },
-
-  onFilterChanged() { /* reactive */ },
-  refreshCells()    { refreshKey.value++ },
-
-  exportDataAsCsv({ fileName = 'export.csv' } = {}) {
-    const cols   = resolvedCols.value
-    const header = cols.map(c => c.colDef.headerName ?? c.colId).join(',')
-    const lines  = filteredRows.value.map(row =>
-      cols.map(col => `"${String(formatCell(col, row)).replace(/"/g, '""')}"`).join(',')
-    )
-    const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv' })
-    const url  = URL.createObjectURL(blob)
-    Object.assign(document.createElement('a'), { href: url, download: fileName }).click()
-    URL.revokeObjectURL(url)
-  },
-
-  resize() { sizeToContainer() },
-
-  resetColumnState() {
-    hiddenCols.clear()
-    for (const def of props.columnDefs) {
-      if (def.hide) hiddenCols.add(colIdOf(def))
-    }
-    sortState.value    = initialSorts()
-    for (const k of Object.keys(colWidths))  delete colWidths[k]
-    for (const k of Object.keys(colFilters)) delete colFilters[k]
-    quickFilter.value  = ''
-    scrollY.value      = 0
-    selectedCell.value = null
-    activeFilter.value = null
-  },
-}
+function onFilterInput(e: Event) { model.setFilterText((e.target as HTMLInputElement).value) }
 
 // ── Watchers → redraw ─────────────────────────────────────────────────────────
-// Separate watchers per concern — a single combined array watcher can miss
-// changes to primitive prop getters when the computed refs haven't changed.
-
-// Data changes
-watch([filteredRows, () => localPinned.value, displayCols, scrollY, hoveredRow, selectedCell],
-  () => nextTick(redraw))
+// (Data / selection watchers live in the model.) Separate watchers per concern — a single
+// combined array watcher can miss changes to primitive prop getters.
 
 // Visual prop changes — each gets its own watcher so Vue definitely fires
 watch(() => props.theme,     () => redraw())
@@ -1219,13 +354,6 @@ watch(() => props.magnify,   (on) => {
   redraw()
 })
 
-// Emit cell-selected when selection changes via keyboard
-watch(selectedCell, (sc) => {
-  if (!sc) return
-  const row = filteredRows.value[sc.row]   // sc.row is absolute
-  const col = displayCols.value[sc.col]
-  if (row && col) emit('cell-selected', { data: row, row: sc.row, col: sc.col, colId: col.colId })
-})
 
 // ── ResizeObserver + IntersectionObserver + window/zoom listeners ─────────────
 
@@ -1255,12 +383,7 @@ function onContextRestored() {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 onMounted(() => {
-  for (const def of props.columnDefs) {
-    if (def.hide) hiddenCols.add(colIdOf(def))
-  }
-  if (!sortState.value.length) sortState.value = initialSorts()
-  localRowData.value = props.rowData ?? []
-  localPinned.value  = props.pinnedBottomRowData ?? []
+  model.init()
 
   document.addEventListener('click',     onDocClick)
   document.addEventListener('mousemove', onGlobalMouseMove)
@@ -1289,12 +412,12 @@ onMounted(() => {
     window.addEventListener('resize', scheduleResize)
     // visualViewport fires on both window resize and browser zoom (ctrl+/-)
     window.visualViewport?.addEventListener('resize', scheduleResize)
-    emit('grid-ready', { api: gridApi })
+    emit('grid-ready', { api: model.api })
   })
 })
 
 onUnmounted(() => {
-  document.removeEventListener('click',     onDocClick,       true)
+  document.removeEventListener('click',     onDocClick)
   document.removeEventListener('mousemove', onGlobalMouseMove)
   document.removeEventListener('mouseup',   onGlobalMouseUp)
   canvasEl.value?.removeEventListener('webglcontextlost',     onContextLost)
@@ -1306,6 +429,7 @@ onUnmounted(() => {
   cancelAnimationFrame(resizeRaf)
   releaseRenderer()
   surface.dispose()
+  model.dispose()
 })
 
 // ── Computed styles ───────────────────────────────────────────────────────────
@@ -1357,7 +481,7 @@ const accentColor = computed(() => themeC.value.accent)
       autofocus
       @input="onFilterInput"
       @keydown.escape="clearFilter"
-      @keydown.enter="activeFilter = null"
+      @keydown.enter="model.closeFilter()"
     />
 
     <!-- Scroll info bar -->
