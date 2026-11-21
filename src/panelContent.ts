@@ -24,6 +24,8 @@ export interface PanelPointerEvent {
   clientY: number
   deltaX: number
   deltaY: number
+  /** click count on 'click' events (1, then 2 for a double-click — as `MouseEvent.detail`); 0 for every other kind */
+  detail: number
   shiftKey: boolean
 }
 
@@ -101,7 +103,7 @@ export function gridContent(o: GridContentOptions): PanelContent & { model: Grid
       case 'down':  model.pointerDown(p, e.clientX, e.clientY); return null
       case 'drag':  model.globalMove(e.clientX, e.clientY); return null
       case 'up':    model.globalUp(); return null
-      case 'click': model.click(p, { shiftKey: e.shiftKey } as MouseEvent); return null
+      case 'click': model.click(p, { shiftKey: e.shiftKey, detail: e.detail } as MouseEvent); return null
       case 'wheel': model.wheel(e.deltaX, e.deltaY, e.shiftKey); return null
     }
   }
