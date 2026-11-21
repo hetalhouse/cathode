@@ -141,6 +141,28 @@ See [`ROADMAP.md`](https://github.com/hetalhouse/cathode/blob/main/ROADMAP.md) f
 Also in the family: **`CathodeCandleGrid`** — a wall of N mini candle charts rendered in ONE WebGL context (cells composite into a single warped sheet; `cell-click` routes through the barrel inverse; bend-field slides more cells in as the wall bends). See the demo's WALL tab.
 
 And **`CathodeGauge`** — a bipolar gauge through the same pipeline: a readout (big figure + `stance` + `sub`), a needle on a `leftLabel`↔`rightLabel` axis that eases to each new `value` on `[min, max]`, then an optional boxed `caption`, a dim `note` and a wrapping row of `items` chips (`{ label, side: 'left' | 'right', value, tone }`, lettered by `sideLetters`) — the shape of a long/short book's net-tilt read-out, one chip per position. `marks` draws labelled ticks on the axis (a second hurdle, a danger line) and `meter` a secondary bar under it — a filled track on `[min, max]` with threshold ticks, a label row and the value at the right (a margin guard, say). `colors` overrides the pole colours (e.g. your P&L up/down), `animate: false` snaps the needle; `emptyText` stands in for an empty `items`. Same `theme` / `curvature` / `scanlines` / `glow` / `magnify` as the rest. See the demo's GAUGE tab.
+
+### In 3D space — `CathodeStage3D` *(experimental, unreleased)*
+
+Every widget can also live as a **panel in one three.js scene** instead of a CSS window: one renderer, a perspective camera, panels that tilt, overlap and recede, and input by raycast.
+
+```ts
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { CathodeStage3D, gridContent, surfaceContent, CathodeSurface } from '@hetalhouse/cathode'
+
+const stage = new CathodeStage3D({
+  container: el,
+  controls: (camera, dom) => new OrbitControls(camera, dom),   // injected — the library doesn't bundle three/addons
+})
+const grid = gridContent({ width: 640, height: 400, columnDefs, rowData })   // headless GridModel + surface
+stage.addPanel({ id: 'trades', title: 'Trades', content: grid, position: [-0.8, 0, 0], rotationY: 0.2, look: { curvature: 12 } })
+```
+
+- A panel is a **`CathodeSurface`** (`mode: 'world'`) plus a **`PanelContent`** that hears pointer events in the surface's own logical px. `gridContent()` binds the headless **`useGridModel`**; a painter-only widget (a gauge) is `surfaceContent(surface, w, h)`.
+- The stage maps a raycast hit's UV through `CathodeSurface.contentPoint()` — the CPU mirror of the CRT warp — so clicks land on the pixel actually drawn. Drag a title bar to move a panel (ray–plane on its own plane); drag empty space to orbit; wheel over a grid scrolls it, elsewhere zooms; the pressed panel takes keyboard focus and is raised. `getLayout()` / `applyLayout()` save and restore positions.
+- The grid's filter popup is typed into directly (there is no DOM input in 3D). Rendering is on demand.
+- Try it: `npm run dev` → `/stage3d.html` (and `/surface3d.html` for a single plane).
+
 | `perspective` | `number` | `1400` | CSS perspective distance (px) — higher = subtler vanishing point |
 | `scanlines` | `boolean` | `true` | Overlay repeating scanline gradient |
 | `glow` | `boolean` | `true` | Apply `text-shadow` phosphor glow to cell text |

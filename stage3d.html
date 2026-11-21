@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>cathode — CathodeStage3D</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #05080a; overflow: hidden; }
+    #stage { position: fixed; inset: 0; }
+    #hud { position: fixed; left: 12px; top: 10px; color: #6ee7a7; font: 12px ui-monospace, Menlo, monospace; opacity: .8; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="hud">CathodeStage3D · drag a title bar to move · drag space to orbit · wheel over a grid scrolls it, elsewhere zooms · ?curv=-20 &amp;static=1</div>
+  <script type="module" src="/demo/stage3d.ts"></script>
+</body>
+</html>
