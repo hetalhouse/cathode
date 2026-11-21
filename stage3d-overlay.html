@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>cathode — CathodeStage3D overlay</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #0b2a3a; overflow: hidden; font: 12px ui-monospace, Menlo, monospace; color: #9fd; }
+    #scene-layer { position: fixed; inset: 0; background: #0b2a3a; z-index: 1; cursor: grab; }
+    #stage       { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+    #dom-window  { position: fixed; z-index: 5; left: 600px; top: 400px; width: 300px; height: 130px; background: #123; border: 1px solid #6ee7a7; padding: 8px; }
+    #hud { position: fixed; left: 12px; top: 10px; z-index: 6; opacity: .8; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="scene-layer"></div>
+  <div id="stage"></div>
+  <div id="dom-window">DOM window above the stage <input id="dom-input" placeholder="type here" /></div>
+  <div id="hud">CathodeStage3D overlay — a transparent, pass-through stage over a host scene (drag empty space = the host's orbit, which drives the stage's camera)</div>
+  <script type="module" src="/demo/stage3d-overlay.ts"></script>
+</body>
+</html>

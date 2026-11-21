@@ -16,6 +16,18 @@
  *
  * Camera control is injected (`controls`) so the library doesn't bundle three/addons — pass
  * `(camera, el) => new OrbitControls(camera, el)`.
+ *
+ * OVERLAY MODE — a stage laid over ANOTHER three.js scene (a dashboard's market scape) instead of
+ * owning the whole view:
+ *   • `transparent` — an alpha canvas, nothing painted where no panel is;
+ *   • `setCameraPose()` — the host drives the camera, so panels sit in the same 3D space as the
+ *     scene beneath (match `fov` / `near` / `far` to that scene's camera);
+ *   • `passThrough` — the canvas takes no pointer events. The stage listens on `inputTarget`
+ *     (capture phase, `document` by default) and picks panels by raycast: a press, click or wheel
+ *     over a panel is handled here and stopped; anywhere else it falls through untouched to the
+ *     scene below (its orbit, its plane clicks). `shouldHandle(target)` lets the host exclude
+ *     events that landed on DOM stacked ABOVE the stage (a window over a panel). Keys go to the
+ *     focused panel via `window`, except while typing in an input.
  */
 import * as THREE from 'three'
 import type { SurfaceLook } from './CathodeSurface'
@@ -34,11 +46,34 @@ export interface CathodeStage3DOptions {
   /** e.g. (camera, el) => new OrbitControls(camera, el) — omit for a fixed camera */
   controls?: (camera: THREE.PerspectiveCamera, el: HTMLElement) => StageControls
   background?: number
+  /** an alpha canvas — nothing is painted where there is no panel (a stage over another scene) */
+  transparent?: boolean
   /** world units are `pxPerUnit` logical px of a panel (default 360) */
   pxPerUnit?: number
   cameraPosition?: [number, number, number]
+  /** camera intrinsics — match them to the scene the stage is laid over (defaults 45 / 0.05 / 100) */
+  fov?: number
+  near?: number
+  far?: number
+  /**
+   * The canvas takes no pointer events; input is picked by raycast on `inputTarget` instead and
+   * only what lands on a panel is consumed. See the overlay-mode note above.
+   */
+  passThrough?: boolean
+  /** where passThrough listens (capture phase). Default: `document`. */
+  inputTarget?: Document | HTMLElement
+  /** passThrough: return false for events that landed on DOM stacked above the stage */
+  shouldHandle?: (target: EventTarget | null) => boolean
+  /** cursor changes (default: set on the canvas, which passThrough makes invisible — route it to the host) */
+  onCursor?: (cursor: string) => void
   onFocus?: (id: string | null) => void
   onPanelMoved?: (id: string, pos: { x: number; y: number; z: number }) => void
+}
+
+/** A camera pose in world space (what an external driver — another scene's camera — sets). */
+export interface StageCameraPose {
+  position: [number, number, number]
+  target:   [number, number, number]
 }
 
 export interface PanelOptions {
@@ -183,18 +218,22 @@ export class CathodeStage3D {
   private resizeObserver: ResizeObserver
   private disposers: (() => void)[] = []
   private lastCursor = ''
+  private readonly passThrough: boolean
+  private swallowClick = false
 
   constructor(private o: CathodeStage3DOptions) {
     this.pxPerUnit = o.pxPerUnit ?? 360
-    this.renderer  = new THREE.WebGLRenderer({ antialias: true, alpha: false })
+    this.passThrough = !!o.passThrough
+    this.renderer  = new THREE.WebGLRenderer({ antialias: true, alpha: !!o.transparent })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-    this.renderer.setClearColor(o.background ?? 0x05080a, 1)
+    this.renderer.setClearColor(o.background ?? 0x05080a, o.transparent ? 0 : 1)
     this.canvas = this.renderer.domElement
-    this.canvas.tabIndex = 0
+    if (!this.passThrough) this.canvas.tabIndex = 0
     this.canvas.style.cssText = 'display:block;width:100%;height:100%;outline:none;touch-action:none'
+      + (this.passThrough ? ';pointer-events:none' : '')
     o.container.appendChild(this.canvas)
 
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.05, 100)
+    this.camera = new THREE.PerspectiveCamera(o.fov ?? 45, 1, o.near ?? 0.05, o.far ?? 100)
     const cp = o.cameraPosition ?? [0, 0.1, 3.4]
     this.camera.position.set(...cp)
     this.camera.lookAt(0, 0, 0)
@@ -205,14 +244,17 @@ export class CathodeStage3D {
     }
 
     // capture phase, so a press on a panel disables orbit BEFORE the controls' own listener runs
-    this.on(this.canvas, 'pointerdown', (e) => this.onPointerDown(e as PointerEvent), { capture: true })
-    this.on(this.canvas, 'pointermove', (e) => this.onPointerMove(e as PointerEvent))
-    this.on(this.canvas, 'pointerleave', () => this.setHover(null))
+    // (passThrough: on the host's input target, where a press on a panel is stopped before it can
+    // reach the scene beneath)
+    const it: EventTarget = this.passThrough ? (o.inputTarget ?? document) : this.canvas
+    this.on(it, 'pointerdown', (e) => this.onPointerDown(e as PointerEvent), { capture: true })
+    this.on(it, 'pointermove', (e) => this.onPointerMove(e as PointerEvent))
+    if (!this.passThrough) this.on(this.canvas, 'pointerleave', () => this.setHover(null))
     this.on(window, 'pointerup', (e) => this.onPointerUp(e as PointerEvent))
     this.on(window, 'pointercancel', (e) => this.onPointerUp(e as PointerEvent))
-    this.on(this.canvas, 'click', (e) => this.onClick(e as MouseEvent))
-    this.on(this.canvas, 'wheel', (e) => this.onWheel(e as WheelEvent), { capture: true, passive: false })
-    this.on(this.canvas, 'keydown', (e) => this.onKey(e as KeyboardEvent))
+    this.on(it, 'click', (e) => this.onClick(e as MouseEvent), { capture: this.passThrough })
+    this.on(it, 'wheel', (e) => this.onWheel(e as WheelEvent), { capture: true, passive: false })
+    this.on(this.passThrough ? window : this.canvas, 'keydown', (e) => this.onKey(e as KeyboardEvent))
 
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(o.container)
@@ -222,6 +264,23 @@ export class CathodeStage3D {
   private on(t: EventTarget, type: string, fn: (e: Event) => void, opts?: AddEventListenerOptions) {
     t.addEventListener(type, fn, opts)
     this.disposers.push(() => t.removeEventListener(type, fn, opts))
+  }
+
+  // ── External camera ─────────────────────────────────────────────────────────
+
+  /** Point the camera (the host drives it — e.g. following another scene's camera). */
+  setCameraPose(pose: StageCameraPose) {
+    this.camera.position.set(...pose.position)
+    this.camera.lookAt(...pose.target)
+    this.camera.updateMatrixWorld(true)
+    this.invalidate()
+  }
+
+  /** The camera's current pose (target = the point it looks at, one unit ahead). */
+  getCameraPose(): StageCameraPose {
+    const p = this.camera.position
+    const t = this.camera.getWorldDirection(new THREE.Vector3()).add(p)
+    return { position: [p.x, p.y, p.z], target: [t.x, t.y, t.z] }
   }
 
   // ── Panels ──────────────────────────────────────────────────────────────────
@@ -413,7 +472,8 @@ export class CathodeStage3D {
   private setCursor(c: string) {
     if (c === this.lastCursor) return
     this.lastCursor = c
-    this.canvas.style.cursor = c
+    if (this.o.onCursor) this.o.onCursor(c)
+    else this.canvas.style.cursor = c
   }
 
   private setHover(p: Panel3D | null, e?: PointerEvent) {
@@ -424,12 +484,22 @@ export class CathodeStage3D {
     if (!p) this.setCursor('')
   }
 
+  /** passThrough: did this event land on something the stage may take (not DOM stacked above it)? */
+  private accepts(e: Event): boolean {
+    return !this.passThrough || !this.o.shouldHandle || this.o.shouldHandle(e.target)
+  }
+
   private onPointerDown(e: PointerEvent) {
-    if (e.button !== 0) return
-    this.canvas.focus({ preventScroll: true })
+    if (e.button !== 0 || !this.accepts(e)) return
+    if (!this.passThrough) this.canvas.focus({ preventScroll: true })
     const hit = this.pick(e.clientX, e.clientY)
-    if (!hit) return                                   // empty space → orbit
-    if (this.controls) this.controls.enabled = false   // a press on a panel never orbits
+    if (!hit) {                                        // empty space → orbit (the scene's, if passThrough)
+      if (this.passThrough) this.setFocus(null)        // …and a press elsewhere releases keyboard focus
+      return
+    }
+    // a press on a panel never reaches the layer beneath (its orbit, its plane clicks)
+    if (this.passThrough) { e.stopPropagation(); this.swallowClick = true }
+    if (this.controls) this.controls.enabled = false   // …and never orbits
     this.setFocus(hit.panel.id)
     this.suppressClick = false
     if (hit.part === 'bar') {
@@ -444,6 +514,7 @@ export class CathodeStage3D {
   private onPointerMove(e: PointerEvent) {
     if (this.dragging) { this.dragTo(e); return }
     if (this.pressed) { this.send(this.pressed, 'drag', e); return }
+    if (!this.accepts(e)) { this.setHover(null, e); return }
     const hit = this.pick(e.clientX, e.clientY)
     this.setHover(hit && hit.part === 'body' ? hit.panel : null, e)
     if (!hit) { this.setCursor(''); return }
@@ -468,12 +539,17 @@ export class CathodeStage3D {
   }
 
   private onClick(e: MouseEvent) {
+    if (!this.accepts(e)) return
+    // the click that ends a press that began on a panel is the panel's, wherever it lands
+    if (this.passThrough && this.swallowClick) { this.swallowClick = false; e.stopPropagation() }
     if (this.suppressClick) { this.suppressClick = false; return }
     const hit = this.pick(e.clientX, e.clientY)
+    if (hit && this.passThrough) e.stopPropagation()
     if (hit && hit.part === 'body') this.send(hit.panel, 'click', e)
   }
 
   private onWheel(e: WheelEvent) {
+    if (!this.accepts(e)) return
     const hit = this.pick(e.clientX, e.clientY)
     if (!hit || hit.part !== 'body') return            // let the camera zoom
     e.preventDefault()
@@ -482,6 +558,10 @@ export class CathodeStage3D {
   }
 
   private onKey(e: KeyboardEvent) {
+    if (this.passThrough) {                            // window-level: not while typing elsewhere
+      const t = e.target as HTMLElement | null
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
+    }
     const p = this.focusedId ? this.panels.get(this.focusedId) : null
     if (p?.content.key) { p.content.key(e); p.invalidate() }
   }
