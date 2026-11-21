@@ -34,10 +34,10 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {
     glow: boolean;
     showTimestamps: boolean;
     wordWrap: boolean;
-    theme: "none" | "phosphor" | "amber" | "paper";
     curvature: number;
     scanlines: boolean;
     magnify: boolean;
+    theme: "none" | "phosphor" | "amber" | "paper";
     autoscroll: boolean;
     maxLines: number;
 }, {}, {}, {}, string, import("vue").ComponentProvideOptions, false, {}, any>;

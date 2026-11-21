@@ -42,9 +42,6 @@ type __VLS_Props = {
     bendField?: boolean;
 };
 declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {}, import("vue").ComponentOptionsMixin, import("vue").ComponentOptionsMixin, {
-    "grid-ready": (args_0: {
-        api: GridApi;
-    }) => any;
     "row-clicked": (args_0: {
         data: any;
         event: MouseEvent;
@@ -58,10 +55,10 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     "column-resized": () => any;
     "sort-changed": () => any;
     "filter-changed": () => any;
-}, string, import("vue").PublicProps, Readonly<__VLS_Props> & Readonly<{
-    "onGrid-ready"?: ((args_0: {
+    "grid-ready": (args_0: {
         api: GridApi;
-    }) => any) | undefined;
+    }) => any;
+}, string, import("vue").PublicProps, Readonly<__VLS_Props> & Readonly<{
     "onRow-clicked"?: ((args_0: {
         data: any;
         event: MouseEvent;
@@ -75,16 +72,19 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     "onColumn-resized"?: (() => any) | undefined;
     "onSort-changed"?: (() => any) | undefined;
     "onFilter-changed"?: (() => any) | undefined;
+    "onGrid-ready"?: ((args_0: {
+        api: GridApi;
+    }) => any) | undefined;
 }>, {
     rowData: any[];
     rowHeight: number;
     glow: boolean;
-    pagination: boolean;
-    paginationPageSize: number;
-    theme: "none" | "phosphor" | "amber" | "paper";
     curvature: number;
     scanlines: boolean;
     magnify: boolean;
+    pagination: boolean;
+    paginationPageSize: number;
+    theme: "none" | "phosphor" | "amber" | "paper";
     bendField: boolean;
 }, {}, {}, {}, string, import("vue").ComponentProvideOptions, false, {}, any>;
 export default _default;

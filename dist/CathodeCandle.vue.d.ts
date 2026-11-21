@@ -48,11 +48,11 @@ type __VLS_Props = {
 declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {}, import("vue").ComponentOptionsMixin, import("vue").ComponentOptionsMixin, {}, string, import("vue").PublicProps, Readonly<__VLS_Props> & Readonly<{}>, {
     flat: boolean;
     glow: boolean;
-    theme: "none" | "phosphor" | "amber" | "paper";
     curvature: number;
     scanlines: boolean;
     magnify: boolean;
     compact: boolean;
+    theme: "none" | "phosphor" | "amber" | "paper";
     showVolume: boolean;
     volumeFraction: number;
     slotW: number;

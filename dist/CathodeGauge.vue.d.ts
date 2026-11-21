@@ -44,11 +44,11 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     min: number;
     max: number;
     glow: boolean;
-    theme: "none" | "phosphor" | "amber" | "paper";
+    meter: GaugeMeter | null;
     curvature: number;
     scanlines: boolean;
     magnify: boolean;
-    meter: GaugeMeter | null;
+    theme: "none" | "phosphor" | "amber" | "paper";
     animate: boolean;
     leftLabel: string;
     rightLabel: string;
