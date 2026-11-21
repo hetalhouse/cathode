@@ -6,9 +6,7 @@
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CathodeStage3D } from '../src/CathodeStage3D'
 import type { StageControls } from '../src/CathodeStage3D'
-import { gridContent, surfaceContent } from '../src/panelContent'
-import { CathodeSurface } from '../src/CathodeSurface'
-import { drawGauge } from '../src/CanvasGauge'
+import { gridContent, gaugeContent } from '../src/panelContent'
 
 const q = new URLSearchParams(location.search)
 const curvature = Number(q.get('curv') ?? 12)
@@ -41,34 +39,20 @@ const grid = gridContent({
   ],
 })
 
-// ── gauge (painter-only content) ─────────────────────────────────────────────
-const g = { shown: 0, value: 0.5 }
-let gaugeInvalidate = () => {}
-const gaugeSurface = new CathodeSurface({
-  mode: 'world',
-  paint: (canvas, { dpr, glow }) => drawGauge(canvas, {
-    dpr, theme: 'phosphor', glow, shown: g.shown, value: g.value, min: -1, max: 1,
-    stance: g.value >= 0 ? 'net long' : 'net short', sub: '5 long · 3 short · 9 flat',
-    leftLabel: 'SHORT', rightLabel: 'LONG', sideLetters: ['S', 'L'],
-    caption: 'tilt through the stage', note: 'a second panel, same scene, same renderer',
-    items: [
-      { label: 'BTC', side: 'right', value: '+2.1%', tone: 'up' },
-      { label: 'ETH', side: 'right', value: '+0.8%', tone: 'up' },
-      { label: 'XRP', side: 'left',  value: '−1.4%', tone: 'down' },
-    ],
-    emptyText: '',
-  }),
+// ── gauge (gaugeContent: the same picture CathodeGauge draws, as a stage panel; the needle eases) ──────
+const gauge = gaugeContent({
+  width: 440, height: 320, theme: 'phosphor',
+  value: 0.62, min: -1, max: 1,
+  stance: 'net long', sub: '5 long · 3 short · 9 flat',
+  leftLabel: 'SHORT', rightLabel: 'LONG', sideLetters: ['S', 'L'],
+  caption: 'tilt through the stage', note: 'a second panel, same scene, same renderer',
+  items: [
+    { label: 'BTC', side: 'right', value: '+2.1%', tone: 'up' },
+    { label: 'ETH', side: 'right', value: '+0.8%', tone: 'up' },
+    { label: 'XRP', side: 'left',  value: '−1.4%', tone: 'down' },
+  ],
 })
-const gauge = surfaceContent(gaugeSurface, 440, 320, { attach: (fn) => { gaugeInvalidate = fn } })
-
-function easeNeedle() {
-  const d = g.value - g.shown
-  if (Math.abs(d) < 0.004) { g.shown = g.value; gaugeInvalidate(); return }
-  g.shown += d * 0.18
-  gaugeInvalidate()
-  requestAnimationFrame(easeNeedle)
-}
-function setTilt(v: number) { g.value = v; easeNeedle() }
+function setTilt(v: number) { gauge.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) }
 
 // ── stage ───────────────────────────────────────────────────────────────────
 const stage = new CathodeStage3D({
@@ -80,7 +64,6 @@ const stage = new CathodeStage3D({
 })
 stage.addPanel({ id: 'trades', title: 'Trades', content: grid,  position: [-0.78, 0, 0],    rotationY: 0.22,  look: { curvature } })
 stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature } })
-setTilt(0.62)
 if (idle) setInterval(() => setTilt(Math.sin(Date.now() / 4000) * 0.9), 2500)
 
-;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, state: g, events }
+;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events }
