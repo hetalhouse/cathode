@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.13.0 — 2026-11-21
+
+**`gaugeContent()` — the gauge as a stage panel.** A gauge in a `CathodeStage3D` needs more than
+`surfaceContent`: its needle has to ease to each new value and sweep in from centre on mount, the way
+`CathodeGauge.vue`'s does. `gaugeContent({ width, height, ...props })` is a ready-made, read-only
+`PanelContent` that draws the same picture `CathodeGauge` draws — the readout, the needle on a
+left↔right axis, `marks`, the secondary `meter`, the caption, the note and one chip per item — with the
+DOM component's easing (18% per frame, settled within 0.004) and defaults.
+
+- `panel.content.update({ value, caption, items, … })` pushes new data: a new `value` eases the needle;
+  any other prop repaints at once. `.shown` is the needle's animated position, `animate: false` snaps it,
+  and `dispose()` stops the animation.
+- `drawGauge` and `GaugeDrawOpts` are now exported (the package has no deep imports, so a host that wants
+  to paint a gauge into its own canvas couldn't reach them).
+- The stage demo (`/stage3d.html`) uses `gaugeContent` in place of a hand-rolled gauge.
+
+New exports: `gaugeContent`, `drawGauge`, and the types `GaugeContentProps`, `GaugeContentOptions`,
+`GaugeDrawOpts`. Additive; nothing existing changes.
+
 ## 0.12.0 — 2026-11-21
 
 **CathodeStage3D grows up for a host app: overlay mode, facing, visibility.** The stage can now be
