@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.11.0 — 2026-11-21
+
+**Cathode in 3D space (experimental).** Every widget can now be a panel in ONE three.js scene
+instead of a CSS window — one renderer, a perspective camera, panels that tilt, overlap and
+recede, and pointer input by raycast. The DOM components are unchanged for existing consumers.
+
+- **`CathodeStage3D`** — a `Panel3D` per surface (a surface mesh + a draggable title bar).
+  Raycast input lands on the pixel actually drawn (through the CRT warp, bend included); drag a
+  title bar to move a panel (ray–plane on its own plane); a press on a panel never orbits the
+  camera, empty space does; the wheel goes to the panel under the cursor, elsewhere zooms; the
+  pressed panel takes keyboard focus and is raised; `getLayout()` / `applyLayout()`; on-demand
+  rendering. Camera controls are injected (`controls: (camera, el) => new OrbitControls(…)`) so
+  the library doesn't bundle `three/addons`. Demo: `/stage3d.html`.
+- **`PanelContent`**, **`gridContent()`**, **`surfaceContent()`** — what a panel shows and how it
+  hears the pointer. `gridContent()` binds a headless grid (the filter popup is typed into
+  directly — there is no DOM input in 3D); `surfaceContent()` is for painter-only widgets.
+- **`CathodeSurface`** — the headless half of a widget: the offscreen canvas, its texture and the
+  barrel / scanlines / vignette / magnify-lens shader, with no renderer, camera or DOM. Mode
+  `'screen'` (clip-space quad, what the DOM widgets use) or `'world'` (model/view/projection, plus
+  mipmaps and anisotropy) so the same material wears any mesh in any scene.
+  `contentPoint(u, v)` is the CPU mirror of the warp for pointer routing; `barrelUV` / `lensUV`
+  are exported. `createSurfaceMesh` / `resizeSurfaceMesh` put one on a plane.
+- **`useGridModel`** — everything `CathodeGrid` knows and does (columns, rows, sort / filter /
+  quick-filter, scroll, selection, the filter popup, column resize, keyboard navigation, the
+  `GridApi`, the paint call) as a headless composable. Input arrives in canvas space
+  (`GridPointer`), not DOM events. `CathodeGrid.vue` is now a thin DOM presenter over it
+  (~1570 → ~580 lines) and `CathodeGauge.vue` a thin presenter over a surface — props, events and
+  rendering are unchanged.
+
+**Fix: convex hit-testing used a Y that was scaled by 0.15.** `CanvasGrid.applyBarrel` still
+carried a leftover attenuation the shaders dropped long ago, so on a convex panel hover, clicks,
+header sorts, resize handles and filter icons near the top and bottom landed up to ~0.15 of the
+panel height away from the pixel under the cursor (flat and concave were exact). The CPU mirror
+now applies the full bend on both axes — a visible improvement on the default convex look, and
+the one behaviour change in this release for existing grid / candle-wall consumers.
+
+Also: the grid's document click listener is actually removed on unmount (it was added without
+capture and removed with it), its filter-caret timer is cleared, its texture and material are
+released, and the no-WebGL 2D fallback now draws the aggregate row like the WebGL path.
+
+New exports: `CathodeStage3D`, `Panel3D`, `gridContent`, `surfaceContent`, `CathodeSurface`,
+`barrelUV`, `lensUV`, `createSurfaceMesh`, `resizeSurfaceMesh`, `useGridModel` and their types
+(`CathodeStage3DOptions`, `PanelOptions`, `PanelLayout`, `StagePick`, `StageControls`,
+`PanelContent`, `PanelPointerEvent`, `PanelPointerKind`, `GridContentOptions`,
+`CathodeSurfaceOptions`, `SurfaceMode`, `SurfacePainter`, `SurfaceLook`, `GridModel`,
+`GridModelOptions`, `GridHost`, `GridEmit`, `GridPointer`, `GridPaintOpts`, `SortKey`).
+
+Not yet in 3D: Log / Candle / Container surfaces, panel minimise / maximise / resize, and a
+world-space radius for the magnify lens (leave `magnify` off on stage panels for now).
+
 ## 0.10.0 — 2026-11-17
 
 **CathodeGrid: shift-click multi-column sort.** Click a header to sort by it (asc → desc → off);

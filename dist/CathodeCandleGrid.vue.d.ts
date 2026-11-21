@@ -38,10 +38,10 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     "onCell-click"?: ((id: string) => any) | undefined;
 }>, {
     glow: boolean;
-    theme: "none" | "phosphor" | "amber" | "paper";
     curvature: number;
     scanlines: boolean;
     magnify: boolean;
+    theme: "none" | "phosphor" | "amber" | "paper";
     bendField: boolean;
     showVolume: boolean;
     volumeFraction: number;
