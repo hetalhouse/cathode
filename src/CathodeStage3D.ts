@@ -35,6 +35,8 @@ import type { PanelContent, PanelPointerEvent, PanelPointerKind } from './panelC
 
 export interface StageControls {
   enabled: boolean
+  /** OrbitControls' pivot — kept in step with the camera when the host / flyTo moves it */
+  target?: { set(x: number, y: number, z: number): unknown }
   update(): void
   dispose(): void
   addEventListener(type: 'change', listener: () => void): void
@@ -68,6 +70,8 @@ export interface CathodeStage3DOptions {
   onCursor?: (cursor: string) => void
   onFocus?: (id: string | null) => void
   onPanelMoved?: (id: string, pos: { x: number; y: number; z: number }) => void
+  /** a panel's title bar was double-clicked (typically: face / fly to it — see facingPose) */
+  onPanelActivate?: (id: string) => void
 }
 
 /** A camera pose in world space (what an external driver — another scene's camera — sets). */
@@ -84,9 +88,11 @@ export interface PanelOptions {
   rotationY?: number
   look?: Partial<SurfaceLook>
   glow?: boolean
+  /** default true; a hidden panel isn't drawn, picked or painted */
+  visible?: boolean
 }
 
-export interface PanelLayout { x: number; y: number; z: number; rotY: number }
+export interface PanelLayout { x: number; y: number; z: number; rotY: number; visible?: boolean }
 
 export interface StagePick {
   panel: Panel3D
@@ -134,12 +140,23 @@ export class Panel3D {
     this.body.userData.panel = this
     this.bar.userData.panel  = this
 
+    if (o.visible === false) this.group.visible = false
     if (o.position) this.group.position.set(...o.position)
     this.group.rotation.y = o.rotationY ?? 0
     if (o.look) s.setLook(o.look)
 
     s.resize(o.content.width, o.content.height, window.devicePixelRatio || 1)
     o.content.attach?.(() => this.invalidate())
+  }
+
+  get visible(): boolean { return this.group.visible }
+
+  /** Show / hide. Prefer stage.setPanelVisible(), which also releases focus / hover / drag. */
+  setVisible(v: boolean) {
+    if (this.group.visible === v) return
+    this.group.visible = v
+    if (v) this.invalidate()          // repaint what changed while it was away
+    else this.stage.invalidate()
   }
 
   /** Repaint the surface on the next frame (and render it). */
@@ -152,6 +169,7 @@ export class Panel3D {
 
   /** @internal called by the stage's frame */
   paintIfDirty() {
+    if (!this.group.visible) return   // stays dirty — repainted when it comes back
     const s = this.content.surface
     if (this.dirty) {
       s.syncUniforms()
@@ -220,6 +238,7 @@ export class CathodeStage3D {
   private lastCursor = ''
   private readonly passThrough: boolean
   private swallowClick = false
+  private cancelFly: (() => void) | null = null
 
   constructor(private o: CathodeStage3DOptions) {
     this.pxPerUnit = o.pxPerUnit ?? 360
@@ -273,7 +292,55 @@ export class CathodeStage3D {
     this.camera.position.set(...pose.position)
     this.camera.lookAt(...pose.target)
     this.camera.updateMatrixWorld(true)
+    this.controls?.target?.set(...pose.target)   // OrbitControls would otherwise snap back to its old pivot
     this.invalidate()
+  }
+
+  /**
+   * The camera pose that looks straight at a panel (its title bar included), from the front, far
+   * enough back that the whole panel fits the view with `margin` (default 12%) to spare. Pure — it
+   * moves nothing: a host that owns the camera (overlay mode) applies it itself; otherwise flyTo().
+   */
+  facingPose(id: string, opts: { margin?: number } = {}): StageCameraPose | null {
+    const p = this.panels.get(id)
+    if (!p) return null
+    p.group.updateWorldMatrix(true, true)
+    const ppu = this.pxPerUnit
+    const bodyH = p.content.height / ppu, barH = BAR_PX / ppu
+    const w = p.content.width / ppu, h = bodyH + barH
+    // the body is centred on the group origin and the bar sits above it, so the whole panel's centre is barH/2 up
+    const center = p.body.localToWorld(new THREE.Vector3(0, barH / 2, 0))
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(p.group.getWorldQuaternion(new THREE.Quaternion()))
+    const t = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))
+    const d = Math.max(h / 2 / t, w / 2 / (t * this.camera.aspect)) * (1 + (opts.margin ?? 0.12))
+    const pos = center.clone().addScaledVector(normal, d)
+    return { position: [pos.x, pos.y, pos.z], target: [center.x, center.y, center.z] }
+  }
+
+  /**
+   * Tween the camera to a pose (ease in-out). For a stage that OWNS its camera — in overlay mode
+   * the host drives the camera, so apply facingPose() there instead. Resolves when it lands; a new
+   * flyTo replaces one in flight. `ms <= 0` snaps.
+   */
+  flyTo(pose: StageCameraPose, ms = 550): Promise<void> {
+    this.cancelFly?.()
+    if (ms <= 0) { this.setCameraPose(pose); return Promise.resolve() }
+    const from = this.getCameraPose()
+    return new Promise<void>((resolve) => {
+      const t0 = performance.now()
+      let raf = 0
+      this.cancelFly = () => { cancelAnimationFrame(raf); this.cancelFly = null; resolve() }
+      const step = (now: number) => {
+        const k = Math.min(1, (now - t0) / ms)
+        const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
+        const lerp = (a: [number, number, number], b: [number, number, number]): [number, number, number] =>
+          [a[0] + (b[0] - a[0]) * e, a[1] + (b[1] - a[1]) * e, a[2] + (b[2] - a[2]) * e]
+        this.setCameraPose({ position: lerp(from.position, pose.position), target: lerp(from.target, pose.target) })
+        if (k < 1) raf = requestAnimationFrame(step)
+        else { this.cancelFly = null; resolve() }
+      }
+      raf = requestAnimationFrame(step)
+    })
   }
 
   /** The camera's current pose (target = the point it looks at, one unit ahead). */
@@ -308,6 +375,20 @@ export class CathodeStage3D {
     this.invalidate()
   }
 
+  /** Show / hide a panel. Hiding releases its focus, hover, press and drag. */
+  setPanelVisible(id: string, visible: boolean) {
+    const p = this.panels.get(id)
+    if (!p) return
+    p.setVisible(visible)
+    if (!visible) {
+      if (this.focusedId === id) this.setFocus(null)
+      if (this.hovered === p) this.hovered = null
+      if (this.pressed === p) this.pressed = null
+      if (this.dragging?.panel === p) this.dragging = null
+    }
+    this.invalidate()
+  }
+
   /** Keyboard focus + raise. */
   setFocus(id: string | null) {
     if (this.focusedId === id) { if (id) this.raise(this.panels.get(id)!); return }
@@ -327,7 +408,7 @@ export class CathodeStage3D {
   getLayout(): Record<string, PanelLayout> {
     const out: Record<string, PanelLayout> = {}
     for (const [id, p] of this.panels) {
-      out[id] = { x: p.group.position.x, y: p.group.position.y, z: p.group.position.z, rotY: p.group.rotation.y }
+      out[id] = { x: p.group.position.x, y: p.group.position.y, z: p.group.position.z, rotY: p.group.rotation.y, visible: p.visible }
     }
     return out
   }
@@ -338,6 +419,7 @@ export class CathodeStage3D {
       if (!p) continue
       p.group.position.set(l.x ?? p.group.position.x, l.y ?? p.group.position.y, l.z ?? p.group.position.z)
       if (l.rotY !== undefined) p.group.rotation.y = l.rotY
+      if (l.visible !== undefined) this.setPanelVisible(id, l.visible)
     }
     this.invalidate()
   }
@@ -394,7 +476,7 @@ export class CathodeStage3D {
   pick(clientX: number, clientY: number): StagePick | null {
     this.setRay(clientX, clientY)
     const meshes: THREE.Object3D[] = []
-    for (const p of this.panels.values()) meshes.push(p.body, p.bar)
+    for (const p of this.panels.values()) if (p.visible) meshes.push(p.body, p.bar)
     const hits = this.ray.intersectObjects(meshes, false)
     if (!hits.length) return null
     // hits are sorted nearest-first; among those within a hair of the nearest (coplanar overlap),
@@ -457,14 +539,15 @@ export class CathodeStage3D {
 
   // ── Pointer routing ─────────────────────────────────────────────────────────
 
-  private send(panel: Panel3D, kind: PanelPointerKind, e: { clientX: number; clientY: number; shiftKey?: boolean },
+  private send(panel: Panel3D, kind: PanelPointerKind, e: { clientX: number; clientY: number; shiftKey?: boolean; detail?: number },
                extra: { deltaX?: number; deltaY?: number } = {}): string | null {
     const c = this.contentAt(panel, e.clientX, e.clientY)
     const ev: PanelPointerEvent = {
       kind, x: c ? c.x : -1, y: c ? c.y : -1,
       hitScale: c ? this.hitScaleAt(panel, e.clientX, e.clientY) : 1,
       clientX: e.clientX, clientY: e.clientY,
-      deltaX: extra.deltaX ?? 0, deltaY: extra.deltaY ?? 0, shiftKey: !!e.shiftKey,
+      deltaX: extra.deltaX ?? 0, deltaY: extra.deltaY ?? 0,
+      detail: kind === 'click' ? (e.detail ?? 0) : 0, shiftKey: !!e.shiftKey,
     }
     return panel.content.pointer?.(ev) ?? null
   }
@@ -546,6 +629,7 @@ export class CathodeStage3D {
     const hit = this.pick(e.clientX, e.clientY)
     if (hit && this.passThrough) e.stopPropagation()
     if (hit && hit.part === 'body') this.send(hit.panel, 'click', e)
+    if (hit && hit.part === 'bar' && e.detail >= 2) this.o.onPanelActivate?.(hit.panel.id)
   }
 
   private onWheel(e: WheelEvent) {
@@ -591,6 +675,7 @@ export class CathodeStage3D {
   // ── Teardown ────────────────────────────────────────────────────────────────
 
   dispose() {
+    this.cancelFly?.()
     cancelAnimationFrame(this.raf)
     this.resizeObserver.disconnect()
     for (const off of this.disposers) off()

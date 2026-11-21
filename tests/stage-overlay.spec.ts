@@ -121,4 +121,31 @@ test.describe('CathodeStage3D overlay mode', () => {
     await page.mouse.click(40, 60);
     expect(await page.evaluate(() => (window as any).__overlay.stage.focusedId)).toBeNull();
   });
+
+  test('facingPose is pure: the HOST applies it (overlay mode) and the panel comes up front-on', async ({ page }) => {
+    await open(page);
+    const corners = () => page.evaluate(() => {
+      const s = (window as any).__overlay.stage;
+      return [s.clientPointForContent('trades', 6, 6), s.clientPointForContent('trades', 514, 6),
+              s.clientPointForContent('trades', 6, 334), s.clientPointForContent('trades', 514, 334)];
+    });
+    // yaw the host away first, so the panel is clearly oblique
+    await page.mouse.move(120, 600); await page.mouse.down(); await page.mouse.move(300, 580, { steps: 8 }); await page.mouse.up();
+    await page.waitForTimeout(250);
+    const [tl0, tr0] = await corners();
+    expect(Math.abs(tl0.y - tr0.y), 'oblique before').toBeGreaterThan(4);
+
+    // facingPose moves nothing by itself…
+    const pure = await page.evaluate(() => {
+      const s = (window as any).__overlay.stage;
+      const a = JSON.stringify(s.getCameraPose()); s.facingPose('trades'); return a === JSON.stringify(s.getCameraPose());
+    });
+    expect(pure).toBe(true);
+    // …the host applies it
+    await page.evaluate(() => { const s = (window as any).__overlay.stage; s.setCameraPose(s.facingPose('trades')); });
+    await page.waitForTimeout(150);
+    const [tl, tr, bl] = await corners();
+    expect(Math.abs(tl.y - tr.y), 'level after the host applies it').toBeLessThan(1.5);
+    expect(Math.abs(tl.x - bl.x), 'vertical after the host applies it').toBeLessThan(1.5);
+  });
 });

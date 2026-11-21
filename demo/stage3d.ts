@@ -1,6 +1,7 @@
 /**
  * CathodeStage3D demo: a sortable, selectable, scrollable grid and a gauge in ONE three.js scene.
  * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion.
+ * Double-click a title bar to fly the camera to face that panel.
  */
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CathodeStage3D } from '../src/CathodeStage3D'
@@ -23,8 +24,12 @@ const trades = Array.from({ length: 120 }, (_, i) => ({
   size: 100 + ((i * 37) % 900),
 }))
 
+// grid events, kept for the tests (row-clicked carries the click count in event.detail)
+const events: { e: string; detail?: number }[] = []
+
 const grid = gridContent({
   width: 640, height: 400,
+  emit: ((e: string, p?: { event?: { detail?: number } }) => { events.push({ e, detail: p?.event?.detail }) }) as never,
   rowData: trades,
   columnDefs: [
     { field: 'id',      headerName: 'ID',      width: 70,  sortable: true },
@@ -70,10 +75,12 @@ const stage = new CathodeStage3D({
   container: document.getElementById('stage')!,
   controls: (camera, el) => new OrbitControls(camera, el) as unknown as StageControls,
   cameraPosition: [0, 0.15, 3.3],
+  // double-click a title bar → fly the camera to face that panel
+  onPanelActivate: (id) => { const pose = stage.facingPose(id); if (pose) void stage.flyTo(pose) },
 })
 stage.addPanel({ id: 'trades', title: 'Trades', content: grid,  position: [-0.78, 0, 0],    rotationY: 0.22,  look: { curvature } })
 stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature } })
 setTilt(0.62)
 if (idle) setInterval(() => setTilt(Math.sin(Date.now() / 4000) * 0.9), 2500)
 
-;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, state: g }
+;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, state: g, events }
