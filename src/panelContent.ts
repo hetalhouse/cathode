@@ -4,12 +4,14 @@
  * A panel is a CathodeSurface (world mode) plus an input adapter. The stage turns a raycast into
  * a PanelPointerEvent in the surface's own LOGICAL px — the same canvas space the painter draws
  * in — and the content decides what it means. gridContent() binds a headless GridModel; any
- * painter-only widget (a gauge) is just surfaceContent().
+ * painter-only widget is just surfaceContent(); gaugeContent() is a ready-made one for a gauge.
  */
 import { CathodeSurface } from './CathodeSurface'
 import { useGridModel } from './useGridModel'
 import type { GridModel, GridEmit } from './useGridModel'
 import type { ColDef } from './types'
+import { drawGauge } from './CanvasGauge'
+import type { GaugeItem, GaugeColors, GaugeMark, GaugeMeter } from './CanvasGauge'
 
 export type PanelPointerKind = 'move' | 'down' | 'up' | 'click' | 'leave' | 'wheel' | 'drag'
 
@@ -129,5 +131,96 @@ export function gridContent(o: GridContentOptions): PanelContent & { model: Grid
     attach: (fn) => { invalidate = fn },
     pointer, key,
     dispose: () => { model.dispose(); surface.dispose() },
+  }
+}
+
+export interface GaugeContentProps {
+  /** 'none' = transparent (glass); built-ins: phosphor | amber | paper */
+  theme?:       'none' | 'phosphor' | 'amber' | 'paper'
+  /** where the needle sits, on the [min, max] axis */
+  value:        number
+  min?:         number
+  max?:         number
+  /** the big figure; defaults to the signed `value` */
+  readout?:     string
+  /** headline beside the readout (e.g. "net short") */
+  stance?:      string
+  /** small line under the headline */
+  sub?:         string
+  leftLabel?:   string
+  rightLabel?:  string
+  /** the letter a chip shows for each pole, e.g. ['S', 'L'] */
+  sideLetters?: [string, string]
+  /** labelled ticks on the axis */
+  marks?:       GaugeMark[]
+  /** a secondary bar under the axis */
+  meter?:       GaugeMeter | null
+  caption?:     string
+  note?:        string
+  items?:       GaugeItem[]
+  emptyText?:   string
+  /** per-instance palette overrides */
+  colors?:      Partial<GaugeColors>
+  /** ease the needle to each new value (and sweep in from centre on mount); default true */
+  animate?:     boolean
+}
+
+export interface GaugeContentOptions extends GaugeContentProps {
+  /** logical px the gauge is drawn at */
+  width:  number
+  height: number
+}
+
+/**
+ * A gauge for the stage — the same picture CathodeGauge.vue draws (a readout, a needle on a
+ * left↔right axis, a caption, a note, a row of chips), as a PanelContent: the needle EASES to each new
+ * value and sweeps in from centre on mount, exactly as the DOM component's does. Read-only (no input).
+ * Push new data with `update()`; `shown` is the needle's current (animated) position.
+ */
+export function gaugeContent(o: GaugeContentOptions): PanelContent & { update(p: Partial<GaugeContentProps>): void; readonly shown: number } {
+  let invalidate = () => {}
+  let state: GaugeContentProps = { ...o }
+  const mid = () => ((state.min ?? -1) + (state.max ?? 1)) / 2
+  let shown = state.animate === false ? state.value : mid()
+  let raf = 0
+
+  const surface = new CathodeSurface({
+    mode: 'world',
+    paint: (canvas, { dpr, glow }) => {
+      drawGauge(canvas, {
+        dpr, theme: state.theme ?? 'none', colors: state.colors, glow,
+        shown, value: state.value, min: state.min ?? -1, max: state.max ?? 1,
+        readout: state.readout, stance: state.stance, sub: state.sub,
+        leftLabel: state.leftLabel ?? '−', rightLabel: state.rightLabel ?? '+', sideLetters: state.sideLetters ?? ['−', '+'],
+        marks: state.marks ?? [], meter: state.meter ?? null,
+        caption: state.caption, note: state.note, items: state.items ?? [], emptyText: state.emptyText,
+      })
+    },
+  })
+
+  // ease the needle toward `value` (the DOM component's constants: 18% per frame, done within 0.004)
+  const animateTo = () => {
+    cancelAnimationFrame(raf)
+    if (state.animate === false) { shown = state.value; invalidate(); return }
+    const step = () => {
+      const d = state.value - shown
+      if (Math.abs(d) < 0.004) { shown = state.value; invalidate(); return }
+      shown += d * 0.18
+      invalidate()
+      raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+  }
+
+  return {
+    surface, width: o.width, height: o.height,
+    attach: (fn) => { invalidate = fn; animateTo() },   // the mount sweep: centre → value
+    update(p) {
+      const moved = p.value !== undefined && p.value !== state.value
+      state = { ...state, ...p }
+      if (moved || p.animate !== undefined) animateTo(); else invalidate()
+    },
+    get shown() { return shown },
+    dispose: () => { cancelAnimationFrame(raf); invalidate = () => {}; surface.dispose() },
   }
 }
