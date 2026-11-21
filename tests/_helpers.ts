@@ -1,4 +1,6 @@
 import type { Page, ConsoleMessage } from '@playwright/test';
+import { screenToCanvas } from '../src/CanvasGrid';
+import { curvatureToStrength, fieldScale } from '../src/lensShader';
 
 /**
  * Subscribes to a page's console + pageerror streams and collects matching
@@ -47,4 +49,36 @@ function defaultMatcher(text: string, type: string): boolean {
     return /GL_INVALID|GL_OUT_OF_MEMORY|GL.*Error|texSubImage|texImage/.test(text);
   }
   return false;
+}
+
+
+/**
+ * The SCREEN pixel (relative to the canvas box) at which the grid's CONTENT point
+ * (contentX, contentY) is actually drawn, through the same barrel mapping the shader and the
+ * grid's hit-testing use. Tests must click where a thing is DRAWN: a bent panel's corners are
+ * bezel (nothing is drawn there), so a click at a fixed offset from the box corner is not a click
+ * on the header at all. `bendField` mirrors the grid prop (content canvas wider by fieldScale).
+ * Returns null when no screen pixel maps within ~1.5 content px.
+ */
+export function screenPointForContent(
+  box: { width: number; height: number },
+  curvature: number,
+  contentX: number,
+  contentY: number,
+  bendField = true,
+): [number, number] | null {
+  const s    = curvatureToStrength(curvature);
+  const texW = bendField ? Math.round(box.width * fieldScale(curvature)) : box.width;
+  const texH = box.height;
+  let best: [number, number] | null = null;
+  let bestD = Infinity;
+  for (let sy = 0; sy < box.height; sy++) {
+    for (let sx = 0; sx < box.width; sx++) {
+      const [cx, cy] = screenToCanvas(sx, sy, box.width, box.height, s, texW, texH);
+      if (cx < 0) continue;
+      const d = Math.hypot(cx - contentX, cy - contentY);
+      if (d < bestD) { bestD = d; best = [sx, sy]; }
+    }
+  }
+  return bestD <= 1.5 ? best : null;
 }

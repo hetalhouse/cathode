@@ -52,7 +52,7 @@ test.describe('CathodeSurface', () => {
     expect(watch.entries, `console emitted GL/page errors:\n${JSON.stringify(watch.entries, null, 2)}`).toEqual([]);
   });
 
-  test('barrelUV matches the grid\'s own applyBarrel (hit-test parity)', async ({ page }) => {
+  test('barrelUV matches the grid\'s own applyBarrel on every bend (hit-test parity)', async ({ page }) => {
     await page.goto('/surface3d.html');
     const r = await page.evaluate(async () => {
       const a = await import('/src/CathodeSurface.ts');
@@ -71,12 +71,9 @@ test.describe('CathodeSurface', () => {
         }
         return max;
       };
-      return { flatConcave: worst([-45, -20, 0], ['x', 'y']), convexX: worst([15, 45], ['x']) };
+      return { all: worst([-45, -20, 0, 15, 45], ['x', 'y']) };
     });
-    expect(r.flatConcave).toBeLessThan(1e-9);
-    expect(r.convexX).toBeLessThan(1e-9);
-    // NOTE: convex Y is deliberately not asserted. CanvasGrid.applyBarrel still scales Y by 0.15
-    // ("legacy convex quirk") while the shader (and CathodeSurface.barrelUV) apply the full bend —
-    // a pre-existing grid hit-test mismatch on convex panels, tracked separately.
+    // every bend, both axes — convex Y included (it was once scaled by 0.15 on the CPU side only)
+    expect(r.all).toBeLessThan(1e-9);
   });
 });

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { collectConsoleErrors } from './_helpers';
+import { collectConsoleErrors, screenPointForContent } from './_helpers';
 
 /**
  * Excel-style multi-cell selection in CathodeGrid.
@@ -35,7 +35,10 @@ test.describe('CathodeGrid range selection', () => {
     // Click the body to seed a single-cell selection at the upper-left
     const box = await canvas.boundingBox();
     if (!box) throw new Error('canvas not found');
-    await page.mouse.click(box.x + 80, box.y + HEADER_H + 14);
+    // click where body cell (content 80, HEADER_H+14) is DRAWN — corners of the 25° convex bend are bezel
+    const at = screenPointForContent(box, 25, 80, HEADER_H + 14);
+    if (!at) throw new Error('no screen pixel draws the first body cell');
+    await page.mouse.click(box.x + at[0], box.y + at[1]);
     await page.waitForTimeout(100);
 
     // Shift+ArrowRight twice → extend across 3 columns
@@ -80,7 +83,10 @@ test.describe('CathodeGrid range selection', () => {
 
     const box = await canvas.boundingBox();
     if (!box) throw new Error('canvas not found');
-    await page.mouse.click(box.x + 80, box.y + HEADER_H + 14);
+    // click where body cell (content 80, HEADER_H+14) is DRAWN — corners of the 25° convex bend are bezel
+    const at = screenPointForContent(box, 25, 80, HEADER_H + 14);
+    if (!at) throw new Error('no screen pixel draws the first body cell');
+    await page.mouse.click(box.x + at[0], box.y + at[1]);
     await page.waitForTimeout(100);
 
     // Build a 3×3 selection
