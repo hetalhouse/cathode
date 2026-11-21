@@ -21,6 +21,8 @@ export interface PanelPointerEvent {
     clientY: number;
     deltaX: number;
     deltaY: number;
+    /** click count on 'click' events (1, then 2 for a double-click — as `MouseEvent.detail`); 0 for every other kind */
+    detail: number;
     shiftKey: boolean;
 }
 export interface PanelContent {

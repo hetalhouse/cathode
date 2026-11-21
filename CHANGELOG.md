@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.12.0 — 2026-11-21
+
+**CathodeStage3D grows up for a host app: overlay mode, facing, visibility.** The stage can now be
+laid over ANOTHER three.js scene (a dashboard's 3D market view) and share its camera, instead of
+owning the whole view. All additive; the stage's existing behaviour is unchanged.
+
+- **Overlay mode.** `transparent` (an alpha canvas — clear wherever no panel is drawn),
+  `fov` / `near` / `far` (match the scene beneath), `setCameraPose({ position, target })` /
+  `getCameraPose()` (the host drives the camera, so panels share the scene's 3D space), and
+  `passThrough`: the canvas takes no pointer events; the stage listens on `inputTarget` (capture
+  phase, `document` by default) and picks by raycast. A press, click or wheel over a panel is
+  handled **and stopped** — the scene's own orbit and plane clicks never see it, including the
+  click that ends a press that began on a panel — and anywhere else it falls through untouched.
+  A press on empty space releases the stage's keyboard focus; keys reach the focused panel from
+  `window`, except while typing in an input / textarea / select / contenteditable.
+  `shouldHandle(target)` excludes events that landed on DOM stacked above the stage, and `onCursor`
+  routes cursor changes to the host (the canvas cursor is invisible under `passThrough`).
+  Demo: `/stage3d-overlay.html`.
+- **Facing.** `stage.facingPose(id, { margin })` is the camera pose that looks straight at a panel
+  (title bar included) from the front, fitted to the view with a margin — pure, it moves nothing, so
+  an overlay host applies it to its own camera. `stage.flyTo(pose, ms)` is an eased tween for a stage
+  that owns its camera (resolves when it lands; a new flight replaces one in progress), and
+  `setCameraPose` now keeps OrbitControls' pivot (`controls.target`) in step so the controls don't
+  snap the camera back. `onPanelActivate(id)` fires on a title-bar double-click — the hook for
+  "face this panel". The demo does exactly that.
+- **Click count.** `PanelPointerEvent.detail` is the click count on `'click'` events (1, then 2 for a
+  double-click), 0 for every other kind. `gridContent` forwards it as `event.detail` on `row-clicked`,
+  so "double-click a row opens its chart" works in 3D the way it does in the DOM grid.
+- **Visibility.** `stage.setPanelVisible(id, visible)` (or `visible:` on `addPanel`): a hidden panel
+  isn't drawn, picked, painted or focused, and hiding releases its focus, hover, press and drag.
+  `getLayout()` / `applyLayout()` carry `visible` alongside the position.
+
+New exports: type `StageCameraPose`. Type changes to be aware of: `PanelPointerEvent` gains a
+required `detail: number` (only matters if you CONSTRUCT these events yourself — a stage hands them
+to your `PanelContent.pointer`), and `PanelLayout`, `PanelOptions` and `StageControls` gain optional
+`visible` / `visible` / `target`.
+
 ## 0.11.0 — 2026-11-21
 
 **Cathode in 3D space (experimental).** Every widget can now be a panel in ONE three.js scene
