@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.14.0 — 2026-11-22
+
+**`Panel3D.setTitle()` — a stage panel's title can change after it is created.** A host whose windows carry live
+counts in their titles ("Open positions (6)", "Ledger (3)") had no way to keep one current: the title was a
+`readonly` field fixed at creation, so a count meant rebuilding the panel (losing its scroll position and selection).
+
+- `panel.setTitle(text)` repaints **only the title bar**, and **only when the text changed** — the same text is a
+  no-op and invalidates nothing. `panel.title` is now a getter.
+- A title too long for the bar is squeezed to fit (`fillText` `maxWidth`) instead of running off it.
+
+Additive; nothing existing changes (`panel.title` still reads the text; it just can't be assigned directly any more —
+it never was meant to be: it is a TypeScript `readonly` that is now a getter).
+
 ## 0.13.0 — 2026-11-21
 
 **`gaugeContent()` — the gauge as a stage panel.** A gauge in a `CathodeStage3D` needs more than
