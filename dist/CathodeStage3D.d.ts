@@ -113,7 +113,6 @@ export interface StagePick {
 export declare class Panel3D {
     readonly stage: CathodeStage3D;
     readonly id: string;
-    readonly title: string;
     readonly content: PanelContent;
     readonly group: THREE.Group<THREE.Object3DEventMap>;
     readonly body: THREE.Mesh;
@@ -121,9 +120,14 @@ export declare class Panel3D {
     glow: boolean;
     dirty: boolean;
     barDirty: boolean;
+    private _title;
     private barCanvas;
     private barTexture;
     constructor(stage: CathodeStage3D, o: PanelOptions);
+    /** the title bar's text */
+    get title(): string;
+    /** Change the title bar's text (e.g. a live count: "Open positions (6)"). Repaints only the bar, and only if it changed. */
+    setTitle(title: string): void;
     get visible(): boolean;
     /** Show / hide. Prefer stage.setPanelVisible(), which also releases focus / hover / drag. */
     setVisible(v: boolean): void;
