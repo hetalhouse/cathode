@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.15.0 — 2026-11-22
+
+**Window controls for stage panels: minimise, maximise, resize.** A `CathodeStage3D` panel could be moved and faced but not
+collapsed or resized the way a DOM window can. All additive; panels have none of this unless asked for.
+
+- **Title-bar controls.** `controls: ['minimize', 'maximize']` on `addPanel` draws the buttons at the bar's right edge —
+  strokes, not font glyphs (a glyph can fall back to a font that lacks it). The stage hit-tests them (`pick(…).control`),
+  shows a hand over them, lights the one under the pointer, and reports a click as `onPanelControl(id, control)`. A press on a
+  button is a button: it never starts a drag, and a click on one is never the "double-click the title to face this panel"
+  gesture. **What a click means is the host's call.** The title text is squeezed so it never runs under the controls.
+- **Minimise.** `stage.setPanelMinimized(id, v)` / `panel.minimized` collapses a panel to its title bar: the body is hidden
+  (not drawn, not picked), hover / press on it are released, `facingPose` fits the bar alone, the button shows "expand", and
+  `minimized` round-trips through `getLayout()` / `applyLayout()` / `addPanel({ minimized })`.
+- **Maximise.** `panel.setMaximized(v)` / `panel.maximized` flips the maximise button to "restore" — a visual flag; the host
+  pairs it with `facingPose(id, { margin })` + `flyTo` to fill the view, and back to the remembered pose.
+- **Resize.** `resizable: true` (with `minSize` / `maxSize`, default 240×160 … 1600×1000) puts a grip in the panel's bottom-right
+  corner; dragging it resizes the panel and **the top-left corner stays put** (the centre moves; a ray–plane drag on the panel's
+  own plane, so it holds under tilt and perspective). The handle is **geometric** — hit-tested on the plane's UV
+  (`pick(…).handle`), so a screen bend can't move it — with a `nwse-resize` cursor; a collapsed panel has no grip. The content
+  must support it: the new optional `PanelContent.resize(w, h)` — `gridContent` re-fits its columns and viewport (more room, more
+  columns / rows), `gaugeContent` redraws, `surfaceContent` accepts one — and then the surface's backing store follows.
+  `onPanelResized(id, size, pos)` fires once on release; `panel.resize(w, h)` does it programmatically; `getLayout()` /
+  `applyLayout()` carry `size` (apply the position **and** the size to restore a saved arrangement). A resize drag is never a
+  content press, a click, or an orbit.
+- **Test helpers.** `stage.clientPointForControl(id, control)` and `stage.clientPointForHandle(id)`.
+
+New exports: type `PanelControl`. New options / methods: `PanelOptions.controls` / `minimized` / `resizable` / `minSize` /
+`maxSize`, `CathodeStage3DOptions.onPanelControl` / `onPanelResized`, `Panel3D.setMinimized` / `setMaximized` / `resize` /
+`controlRect` / `controlAt` / `grip`, `PanelContent.resize`, `PanelLayout.minimized` / `size`, `StagePick.control` / `handle`.
+Type-level note: `StagePick` gains two **required** fields (`control`, `handle`) — only relevant if you construct a `StagePick`
+yourself; the stage hands them to you.
+
 ## 0.14.0 — 2026-11-22
 
 **`Panel3D.setTitle()` — a stage panel's title can change after it is created.** A host whose windows carry live
