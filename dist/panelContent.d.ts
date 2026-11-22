@@ -4,11 +4,12 @@
  * A panel is a CathodeSurface (world mode) plus an input adapter. The stage turns a raycast into
  * a PanelPointerEvent in the surface's own LOGICAL px — the same canvas space the painter draws
  * in — and the content decides what it means. gridContent() binds a headless GridModel; any
- * painter-only widget (a gauge) is just surfaceContent().
+ * painter-only widget is just surfaceContent(); gaugeContent() is a ready-made one for a gauge.
  */
 import { CathodeSurface } from './CathodeSurface';
 import type { GridModel, GridEmit } from './useGridModel';
 import type { ColDef } from './types';
+import type { GaugeItem, GaugeColors, GaugeMark, GaugeMeter } from './CanvasGauge';
 export type PanelPointerKind = 'move' | 'down' | 'up' | 'click' | 'leave' | 'wheel' | 'drag';
 export interface PanelPointerEvent {
     kind: PanelPointerKind;
@@ -61,4 +62,49 @@ export interface GridContentOptions {
  */
 export declare function gridContent(o: GridContentOptions): PanelContent & {
     model: GridModel;
+};
+export interface GaugeContentProps {
+    /** 'none' = transparent (glass); built-ins: phosphor | amber | paper */
+    theme?: 'none' | 'phosphor' | 'amber' | 'paper';
+    /** where the needle sits, on the [min, max] axis */
+    value: number;
+    min?: number;
+    max?: number;
+    /** the big figure; defaults to the signed `value` */
+    readout?: string;
+    /** headline beside the readout (e.g. "net short") */
+    stance?: string;
+    /** small line under the headline */
+    sub?: string;
+    leftLabel?: string;
+    rightLabel?: string;
+    /** the letter a chip shows for each pole, e.g. ['S', 'L'] */
+    sideLetters?: [string, string];
+    /** labelled ticks on the axis */
+    marks?: GaugeMark[];
+    /** a secondary bar under the axis */
+    meter?: GaugeMeter | null;
+    caption?: string;
+    note?: string;
+    items?: GaugeItem[];
+    emptyText?: string;
+    /** per-instance palette overrides */
+    colors?: Partial<GaugeColors>;
+    /** ease the needle to each new value (and sweep in from centre on mount); default true */
+    animate?: boolean;
+}
+export interface GaugeContentOptions extends GaugeContentProps {
+    /** logical px the gauge is drawn at */
+    width: number;
+    height: number;
+}
+/**
+ * A gauge for the stage — the same picture CathodeGauge.vue draws (a readout, a needle on a
+ * left↔right axis, a caption, a note, a row of chips), as a PanelContent: the needle EASES to each new
+ * value and sweeps in from centre on mount, exactly as the DOM component's does. Read-only (no input).
+ * Push new data with `update()`; `shown` is the needle's current (animated) position.
+ */
+export declare function gaugeContent(o: GaugeContentOptions): PanelContent & {
+    update(p: Partial<GaugeContentProps>): void;
+    readonly shown: number;
 };

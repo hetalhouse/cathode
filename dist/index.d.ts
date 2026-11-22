@@ -16,7 +16,8 @@ export type { OHLCVCandle, CandleColors, PriceOverlay, PriceOverlayLine, PriceOv
 export { CANDLE_THEME_COLORS } from './CanvasCandle';
 export { default as CathodeGauge } from './CathodeGauge.vue';
 export type { GaugeItem, GaugeColors, GaugeMark, GaugeMeter } from './CanvasGauge';
-export { GAUGE_THEME_COLORS } from './CanvasGauge';
+export { GAUGE_THEME_COLORS, drawGauge } from './CanvasGauge';
+export type { GaugeDrawOpts } from './CanvasGauge';
 export { CathodeSurface, barrelUV, lensUV } from './CathodeSurface';
 export type { CathodeSurfaceOptions, SurfaceMode, SurfacePainter, SurfaceLook } from './CathodeSurface';
 export { createSurfaceMesh, resizeSurfaceMesh } from './surfaceMesh';
@@ -24,5 +25,5 @@ export { useGridModel } from './useGridModel';
 export type { GridModel, GridModelOptions, GridHost, GridEmit, GridPointer, GridPaintOpts, SortKey } from './useGridModel';
 export { CathodeStage3D, Panel3D } from './CathodeStage3D';
 export type { CathodeStage3DOptions, PanelOptions, PanelLayout, StagePick, StageControls, StageCameraPose } from './CathodeStage3D';
-export { gridContent, surfaceContent } from './panelContent';
-export type { PanelContent, PanelPointerEvent, PanelPointerKind, GridContentOptions } from './panelContent';
+export { gridContent, surfaceContent, gaugeContent } from './panelContent';
+export type { PanelContent, PanelPointerEvent, PanelPointerKind, GridContentOptions, GaugeContentProps, GaugeContentOptions } from './panelContent';
