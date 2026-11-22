@@ -10,6 +10,10 @@ import { CathodeSurface } from './CathodeSurface'
 import { useGridModel } from './useGridModel'
 import type { GridModel, GridEmit } from './useGridModel'
 import type { ColDef } from './types'
+import { shallowReactive } from 'vue'
+import { useLogModel } from './useLogModel'
+import type { LogModel } from './useLogModel'
+import type { LogEntry } from './CanvasLog'
 import { drawGauge } from './CanvasGauge'
 import type { GaugeItem, GaugeColors, GaugeMark, GaugeMeter } from './CanvasGauge'
 
@@ -137,6 +141,79 @@ export function gridContent(o: GridContentOptions): PanelContent & { model: Grid
     pointer, key,
     // more room → more columns / rows; the model re-clamps scroll and re-fits the columns to the new canvas
     resize(w, h) { content.width = w; content.height = h; model.setViewport(w, h, w, h); invalidate() },
+    dispose: () => { model.dispose(); surface.dispose() },
+  }
+  return content
+}
+
+export interface LogContentProps {
+  entries:         LogEntry[]
+  /** 'none' = transparent (glass); built-ins: phosphor | amber | paper */
+  theme?:          'none' | 'phosphor' | 'amber' | 'paper'
+  showTimestamps?: boolean
+  formatTs?:       (ts: number | string) => string
+  /** wrap long lines to the panel width (default true) */
+  wordWrap?:       boolean
+  /** ring-buffer cap on rendered entries; 0 = no cap */
+  maxLines?:       number
+}
+export interface LogContentOptions extends LogContentProps { width: number; height: number }
+
+/**
+ * A log for the stage: a headless LogModel + a world-mode surface, with the pointer, wheel and keys routed into the model —
+ * scroll (wheel / drag-pan), follow-the-tail, hover, click / shift-click line selection, arrows / page / home / end, Cmd+A,
+ * Cmd+C. `update()` swaps the entries (or any other prop): a log that was following the tail keeps following it.
+ */
+export function logContent(o: LogContentOptions): PanelContent & { model: LogModel; update(p: Partial<LogContentProps>): void } {
+  let invalidate = () => {}
+  // shallow: the entry array can be big — only a REPLACEMENT of it (or of a prop) is a change
+  const state = shallowReactive<LogContentProps>({
+    entries: o.entries, theme: o.theme ?? 'phosphor', showTimestamps: o.showTimestamps, formatTs: o.formatTs,
+    wordWrap: o.wordWrap, maxLines: o.maxLines,
+  })
+  const model = useLogModel({
+    entries:        () => state.entries,
+    theme:          () => state.theme ?? 'phosphor',
+    showTimestamps: () => state.showTimestamps ?? true,
+    formatTs:       () => state.formatTs,
+    wordWrap:       () => state.wordWrap ?? true,
+    maxLines:       () => state.maxLines ?? 0,
+    host:           { redraw: () => invalidate() },
+  })
+  model.setViewport(o.width, o.height)
+  model.scrollToBottom()                                   // a log opens on its latest entry
+
+  const surface = new CathodeSurface({ mode: 'world', paint: (canvas, p) => model.paint(canvas, p) })
+
+  // a press that moved is a pan, not a selection click (the stage reports a click after the release)
+  let down = { x: 0, y: 0 }, dragged = false
+  const pointer: PanelContent['pointer'] = (e) => {
+    switch (e.kind) {
+      case 'move':  model.hover(e.x < 0 ? -1 : e.y); return null
+      case 'leave': model.leave(); return null
+      case 'down':
+        down = { x: e.clientX, y: e.clientY }; dragged = false
+        // the pan moves the content with the pointer: screen px → content px
+        model.panStart(e.clientX * e.hitScale, e.clientY * e.hitScale)
+        return null
+      case 'drag':
+        if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) dragged = true
+        model.panMove(e.clientX * e.hitScale, e.clientY * e.hitScale)
+        return null
+      case 'up':    model.panEnd(); return null
+      case 'click': if (!dragged) model.click(e.x < 0 ? -1 : e.y, e.shiftKey); dragged = false; return null
+      case 'wheel': model.wheel(e.deltaX, e.deltaY, e.shiftKey); return null
+    }
+  }
+
+  const content: PanelContent & { model: LogModel; update(p: Partial<LogContentProps>): void } = {
+    model, surface, width: o.width, height: o.height,
+    attach: (fn) => { invalidate = fn },
+    pointer,
+    key: (e) => model.keyDown(e),
+    update(p) { Object.assign(state, p); invalidate() },
+    // more room → the lines re-wrap to the new width and more of them show
+    resize(w, h) { content.width = w; content.height = h; model.setViewport(w, h); invalidate() },
     dispose: () => { model.dispose(); surface.dispose() },
   }
   return content

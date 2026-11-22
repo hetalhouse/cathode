@@ -1,0 +1,71 @@
+{
+  "default": {
+    "steps": {
+      "initial (stuck to the bottom)": "878b6eec7bb5",
+      "wheel up": "ab8c81c405d4",
+      "wheel to the top": "2e2689557e17",
+      "horizontal wheel": "2e2689557e17",
+      "wheel down then a little up": "2944d5ef0f07",
+      "hover a line": "a876f47e0280",
+      "click selects a line": "ff7fb39d9675",
+      "shift-click extends": "165214dec72c",
+      "shift+arrow x3": "ad8ba983b2f5",
+      "arrow up x2 collapses": "9ea8cf684716",
+      "page down": "f7479a5e2614",
+      "home": "2e2689557e17",
+      "arrow right x2": "2e2689557e17",
+      "end": "f7479a5e2614",
+      "select all": "8d3ccdd92698",
+      "escape clears": "b5ab372ad970",
+      "drag-pan": "220ef305ce8c",
+      "pointer leaves": "4de553f683d2"
+    },
+    "copied": "#5 A deliberately long single-line entry to exercise word-wrap. The component should split this across several visual lines without breaking the theme, and continuation lines align under the text column rather than the timestamp prefix."
+  },
+  "nowrap": {
+    "steps": {
+      "initial (stuck to the bottom)": "8ebcc024a8d5",
+      "wheel up": "866b02f33435",
+      "wheel to the top": "ebe5582cc4d6",
+      "horizontal wheel": "bde49a99d4d5",
+      "wheel down then a little up": "03a0441d1fb2",
+      "hover a line": "81d16c428b02",
+      "click selects a line": "7e84c19ff1af",
+      "shift-click extends": "e728120ebb97",
+      "shift+arrow x3": "a983687033e4",
+      "arrow up x2 collapses": "566b2da14291",
+      "page down": "d71dcbce84be",
+      "home": "ebe5582cc4d6",
+      "arrow right x2": "963d8daa57a9",
+      "end": "4fe464ddf999",
+      "select all": "a0afa33bd987",
+      "escape clears": "9665f68713ec",
+      "drag-pan": "c9ebb27682b9",
+      "pointer leaves": "089f8802b348"
+    },
+    "copied": "14:00:42  #6 scanner cycle 18 complete — 1 candidates passed the filter"
+  },
+  "nots": {
+    "steps": {
+      "initial (stuck to the bottom)": "09a95f0695dd",
+      "wheel up": "48aae5db1b42",
+      "wheel to the top": "87339642a1bd",
+      "horizontal wheel": "87339642a1bd",
+      "wheel down then a little up": "4d02ffc563db",
+      "hover a line": "c4ef23ced328",
+      "click selects a line": "bbad076a434b",
+      "shift-click extends": "dae05bca24af",
+      "shift+arrow x3": "e5f5edec3ebd",
+      "arrow up x2 collapses": "efd905c17946",
+      "page down": "9e708f4df845",
+      "home": "87339642a1bd",
+      "arrow right x2": "87339642a1bd",
+      "end": "9e708f4df845",
+      "select all": "830a86d99ad5",
+      "escape clears": "99fe2b6d3805",
+      "drag-pan": "be110701ca7c",
+      "pointer leaves": "79fe1dd82271"
+    },
+    "copied": "#5 A deliberately long single-line entry to exercise word-wrap. The component should split this across several visual lines without breaking the theme, and continuation lines align under the text column rather than the timestamp prefix."
+  }
+}

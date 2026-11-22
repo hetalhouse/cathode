@@ -4,16 +4,11 @@ import {
 } from 'vue'
 import type { CSSProperties, Ref } from 'vue'
 import * as THREE from 'three'
+import { LOG_THEME_COLORS, LINE_HEIGHT, PADDING_Y, type LogEntry } from './CanvasLog'
+import { CathodeSurface } from './CathodeSurface'
+import { useLogModel } from './useLogModel'
 import {
-  drawLog, lineHitTest, buildVisualLines, measureTimestampWidth, defaultFormatTs,
-  totalContentHeight, LOG_THEME_COLORS,
-  LINE_HEIGHT, PADDING_X, PADDING_Y, FONT,
-  type LogEntry, type VisualLine,
-} from './CanvasLog'
-import {
-  LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
-  createLensUniforms, writeLensUniforms, eventToLensUV,
-  LENS_INACTIVE, type MouseLensUV, curvatureToStrength,
+  eventToLensUV, LENS_INACTIVE, type MouseLensUV,
 } from './lensShader'
 import './cathode.css'
 
@@ -64,107 +59,20 @@ const canvasEl = ref<HTMLCanvasElement | null>(null)
 
 const mouseLensUV: MouseLensUV = { ...LENS_INACTIVE }
 
-// ── Canvas dimensions (set by sizeToContainer) ────────────────────────────────
+// ── The model ─────────────────────────────────────────────────────────────────
+// Entries → wrapped lines, scroll + follow-the-tail, hover, selection, keyboard, copy and the paint
+// all live in useLogModel.ts. This component is the DOM presenter: it owns the canvas, the renderer
+// and the DOM events, and maps each event into the canvas space the model works in.
 
-const canvasW = ref(0)
-const canvasH = ref(0)
-
-// ── Scroll state ──────────────────────────────────────────────────────────────
-
-const scrollY     = ref(0)
-const hoveredLine = ref(-1)
-/** True when the user has scrolled away from the bottom — autoscroll pauses. */
-const stuckToBottom = ref(true)
-
-// Selection state — Excel-style range. anchor = where selection started,
-// active = where it ends. Both -1 = no selection. Range is the inclusive
-// span between min(anchor, active) and max(anchor, active). Plain click
-// or arrow collapses anchor and active to the same line.
-const selectionAnchor = ref(-1)
-const selectionActive = ref(-1)
-
-// ── Visual lines (wrapped) — recomputed when entries / width / theme change ───
-
-const trimmedEntries = computed(() => {
-  const entries = props.entries ?? []
-  if (props.maxLines > 0 && entries.length > props.maxLines) {
-    return entries.slice(entries.length - props.maxLines)
-  }
-  return entries
+const model = useLogModel({
+  entries:        () => props.entries,
+  theme:          () => props.theme,
+  showTimestamps: () => props.showTimestamps,
+  formatTs:       () => props.formatTs,
+  wordWrap:       () => props.wordWrap,
+  maxLines:       () => props.maxLines,
+  host:           { redraw: () => redraw() },
 })
-
-/**
- * Sample timestamp used to size the timestamp column. We pick the longest
- * formatted ts in the buffer; if the buffer is empty we use a placeholder.
- */
-const timestampSample = computed(() => {
-  if (!props.showTimestamps) return ''
-  const fmt = props.formatTs ?? defaultFormatTs
-  let widest = '00:00:00'
-  for (const e of trimmedEntries.value) {
-    if (e.ts == null) continue
-    const s = fmt(e.ts)
-    if (s.length > widest.length) widest = s
-  }
-  return widest
-})
-
-const tsWidth = ref(0)
-const visualLines = ref<VisualLine[]>([])
-
-function recomputeVisualLines() {
-  if (!offCanvas) return
-  const ctx = offCanvas.getContext('2d')
-  if (!ctx) return
-  ctx.font = FONT
-
-  const wWidth = props.showTimestamps
-    ? measureTimestampWidth(ctx, timestampSample.value)
-    : 0
-  tsWidth.value = wWidth
-
-  const textMaxWidth = Math.max(
-    1,
-    canvasW.value - PADDING_X * 2 - wWidth,
-  )
-
-  visualLines.value = buildVisualLines({
-    entries:        trimmedEntries.value,
-    ctx,
-    textMaxWidth,
-    showTimestamps: props.showTimestamps,
-    formatTs:       props.formatTs,
-    wordWrap:       props.wordWrap,
-  })
-}
-
-const contentH = computed(() => totalContentHeight(visualLines.value.length))
-const maxScrollY = computed(() => Math.max(0, contentH.value - canvasH.value))
-
-/** Widest visual line in pixels — used to clamp horizontal scroll. */
-const contentW = computed(() => {
-  let max = 0
-  for (const l of visualLines.value) if (l.widthPx > max) max = l.widthPx
-  // tsWidth + text + gutter on the right so the trailing edge isn't flush
-  return PADDING_X * 2 + tsWidth.value + max
-})
-const maxScrollX = computed(() => Math.max(0, contentW.value - canvasW.value))
-const scrollX    = ref(0)
-
-watch(maxScrollY, () => {
-  if (stuckToBottom.value) scrollY.value = maxScrollY.value
-  else scrollY.value = Math.min(scrollY.value, maxScrollY.value)
-})
-watch(maxScrollX, () => {
-  scrollX.value = Math.min(scrollX.value, maxScrollX.value)
-})
-
-// Recompute visual lines when entries or relevant props change
-watch(
-  [trimmedEntries, canvasW, () => props.showTimestamps, () => props.wordWrap, timestampSample],
-  () => { recomputeVisualLines(); nextTick(redraw) },
-  { deep: false },
-)
 
 // ── Three.js ──────────────────────────────────────────────────────────────────
 
@@ -184,86 +92,16 @@ function releaseRenderer() {
 }
 let scene:       THREE.Scene
 let camera:      THREE.OrthographicCamera
-let material:    THREE.ShaderMaterial
-let texture:     THREE.CanvasTexture
-let offCanvas:   HTMLCanvasElement
+let dpr = 1
 
-const VERT = `
-  varying vec2 vUv;
-  void main() {
-    vUv         = uv;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
-  }
-`
-
-const FRAG = `
-  uniform sampler2D uTex;
-  uniform float     uStrength;
-  uniform float     uScanlines;
-  uniform float     uVignette;
-  ${LENS_FRAG_UNIFORMS}
-
-  varying vec2 vUv;
-
-  vec2 barrel(vec2 uv) {
-    // Signed bend: magnitude from |strength|, direction applied after.
-    // CONVEX (+): classic barrel — corners sample past the texture → bezel.
-    // CONCAVE (−): the full 0.5.0 dish, plus a fit-to-content rescale. The
-    // raw inward map samples a shrunken region, so the texture's outer
-    // margin (headers, edge columns) was never displayed at high strength.
-    // Scaling the sampled field so the screen CORNERS land exactly on the
-    // texture corners guarantees every content pixel is drawn; the sampled
-    // range then overshoots [0,1] at the edge MIDPOINTS, which renders as
-    // the classic pincushion silhouette — content pinching inward on each
-    // side, corners touching, the header riding the bowed top edge.
-    vec2  cc   = uv - 0.5;
-    float as   = abs(uStrength);
-    float dist = dot(cc, cc) * as;
-    vec2  m    = cc + cc * (1.0 + dist) * dist * sign(uStrength);
-    if (uStrength < 0.0) {
-      float cd = 0.5 * as;                        // corner dist = |cc|²·as at (.5,.5)
-      float cp = 0.5 * (1.0 + cd) * cd;           // corner inward pull
-      m /= (1.0 - 2.0 * cp);                      // corners → exactly ±0.5
-    }
-    return vec2(0.5) + m;
-  }
-
-  ${LENS_FRAG_FN}
-
-  void main() {
-    vec2 lensUV = applyLens(vUv);
-    vec2 uv     = barrel(lensUV);
-
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-      gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
-      return;
-    }
-
-    vec4 color = texture2D(uTex, uv);
-
-    if (uScanlines > 0.5) {
-      if (mod(gl_FragCoord.y, 2.0) < 1.0) color.rgb *= 0.87;
-    }
-
-    if (uVignette > 0.5) {
-      // Falloff coefficient was 1.5 — corners darkened to ~25% of centre,
-      // which crushed text brightness. Dropped to 0.6: corners now hold
-      // ~70%+ luminance so text reads bright across the whole screen.
-      vec2  vc   = uv - 0.5;
-      float vign = 1.0 - dot(vc, vc) * 0.6;
-      color.rgb  *= clamp(vign, 0.0, 1.0);
-    }
-
-    ${LENS_FRAG_RING}
-
-    gl_FragColor = color;
-  }
-`
+// The CathodeSurface owns the offscreen canvas, its CanvasTexture and the barrel / scanlines /
+// vignette / lens shader; this component supplies the renderer + orthographic camera that present
+const surface = new CathodeSurface({
+  paint: (canvas, { dpr: d, glow }) => model.paint(canvas, { dpr: d, glow }),
+})
 
 function initThree() {
   if (!canvasEl.value || !wrapEl.value) return
-
-  offCanvas = document.createElement('canvas')
 
   try {
     renderer = new THREE.WebGLRenderer({ canvas: canvasEl.value, antialias: false, alpha: true })
@@ -284,25 +122,7 @@ function initThree() {
 
   scene  = new THREE.Scene()
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
-
-  texture = new THREE.CanvasTexture(offCanvas)
-  texture.minFilter = THREE.LinearFilter
-  texture.magFilter = THREE.LinearFilter
-
-  material = new THREE.ShaderMaterial({
-    uniforms: {
-      uTex:       { value: texture },
-      uStrength:  { value: 0.0 },
-      uScanlines: { value: 1.0 },
-      uVignette:  { value: 1.0 },
-      ...createLensUniforms(),
-    },
-    vertexShader:   VERT,
-    fragmentShader: FRAG,
-    transparent:    true,
-  })
-
-  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material))
+  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), surface.material))
 
   sizeToContainer()
 }
@@ -314,41 +134,25 @@ function sizeToContainer() {
   const H = wrapEl.value.clientHeight
   if (!W || !H) return
 
-  const sizeChanged = offCanvas.width !== W || offCanvas.height !== H
-  // Critical: setting `offCanvas.width = W` clears the canvas state even when
-  // the value is unchanged. ResizeObserver / IntersectionObserver can fire
-  // spuriously (e.g. on Vue prop updates that re-render unrelated DOM in the
-  // ancestor flex layout), so we MUST early-return when nothing changed —
-  // otherwise the visible canvas blanks until the next redraw lands.
-  if (!sizeChanged) return
-
-  offCanvas.width  = W
-  offCanvas.height = H
-  canvasW.value    = W
-  canvasH.value    = H
-
-  // Recompute wrapping for the new width
-  recomputeVisualLines()
+  // Critical: setting a canvas width clears it even when the value is unchanged.
+  // ResizeObserver / IntersectionObserver can fire spuriously (e.g. on Vue prop
+  // updates that re-render unrelated DOM in the ancestor flex layout), so we MUST
+  // early-return when nothing changed — otherwise the visible canvas blanks until
+  // the next redraw lands. (surface.resize() reports false when nothing changed.)
+  if (!surface.resize(W, H)) return
+  surface.setScreenSize(W, H)
+  dpr = surface.dpr
+  model.setViewport(W, H)
 
   if (renderer) {
-    if (sizeChanged && texture) {
-      texture.dispose()
-      texture = new THREE.CanvasTexture(offCanvas)
-      texture.minFilter = THREE.LinearFilter
-      texture.magFilter = THREE.LinearFilter
-      if (material) material.uniforms.uTex.value = texture
-    }
-    renderer.setPixelRatio(window.devicePixelRatio || 1)
+    renderer.setPixelRatio(dpr)
     renderer.setSize(W, H)
   } else if (canvasEl.value) {
-    canvasEl.value.width  = W
-    canvasEl.value.height = H
+    canvasEl.value.width  = Math.round(W * dpr)
+    canvasEl.value.height = Math.round(H * dpr)
     canvasEl.value.style.width  = W + 'px'
     canvasEl.value.style.height = H + 'px'
   }
-
-  // Maintain stuck-to-bottom invariant after a resize
-  if (stuckToBottom.value) scrollY.value = Math.max(0, contentH.value - canvasH.value)
 
   redraw()
 }
@@ -356,60 +160,37 @@ function sizeToContainer() {
 // ── Redraw ────────────────────────────────────────────────────────────────────
 
 function redraw() {
-  if (!offCanvas?.width) return
+  if (!surface.canvas.width) return
 
   if (webglFailed) {
     if (!canvasEl.value) return
-    drawLog(offCanvas, {
-      visualLines:    visualLines.value,
-      scrollY:        scrollY.value,
-      scrollX:        scrollX.value,
-      theme:          props.theme,
-      glow:           false,
-      showTimestamps: props.showTimestamps,
-      timestampWidth: tsWidth.value,
-      hoveredLine:    hoveredLine.value,
-      selectionStart: Math.min(selectionAnchor.value, selectionActive.value),
-      selectionEnd:   Math.max(selectionAnchor.value, selectionActive.value),
-    })
+    surface.paintOnly(false)
     const ctx2d = canvasEl.value.getContext('2d')
-    if (ctx2d) ctx2d.drawImage(offCanvas, 0, 0)
+    if (ctx2d) ctx2d.drawImage(surface.canvas, 0, 0, surface.canvas.width, surface.canvas.height, 0, 0, canvasEl.value.width, canvasEl.value.height)
     return
   }
 
-  if (!renderer || !material || !texture) return
+  if (!renderer) return
 
   const isPaper = props.theme === 'paper'
-
-  material.uniforms.uStrength.value  = curvatureToStrength(props.curvature)
-  material.uniforms.uScanlines.value = (props.scanlines && !isPaper) ? 1.0 : 0.0
-  material.uniforms.uVignette.value  = isPaper ? 0.0 : 1.0
-  writeLensUniforms(material, props.magnify, mouseLensUV, offCanvas.width, offCanvas.height)
-
-  drawLog(offCanvas, {
-    visualLines:    visualLines.value,
-    scrollY:        scrollY.value,
-    scrollX:        scrollX.value,
-    theme:          props.theme,
-    glow:           props.glow,
-    showTimestamps: props.showTimestamps,
-    timestampWidth: tsWidth.value,
-    hoveredLine:    hoveredLine.value,
-    selectionStart: Math.min(selectionAnchor.value, selectionActive.value),
-    selectionEnd:   Math.max(selectionAnchor.value, selectionActive.value),
+  surface.setLook({
+    curvature: props.curvature,
+    scanlines: props.scanlines && !isPaper,
+    vignette:  !isPaper,
+    magnify:   props.magnify,
   })
-
-  texture.needsUpdate = true
+  surface.setLens(props.magnify ? mouseLensUV : null)
+  surface.syncUniforms()
+  surface.paint(props.glow)
   renderer.render(scene, camera)
 }
 
-// ── Theme prop redraws ────────────────────────────────────────────────────────
+// ── Prop redraws ──────────────────────────────────────────────────────────────
 
 watch(() => props.theme,     () => redraw())
 // Curvature only changes the barrel-shader uStrength uniform — no layout
-// or texture impact. redraw() picks up the new uStrength + re-renders.
-// (The blanking-on-slider bug was traced to spurious ResizeObserver fires
-// during slider drag, which is fixed by the !sizeChanged guard in
+// or texture impact. (The blanking-on-slider bug was traced to spurious
+// ResizeObserver fires during slider drag, fixed by the no-change guard in
 // sizeToContainer above.)
 watch(() => props.curvature, () => redraw())
 watch(() => props.scanlines, () => redraw())
@@ -418,12 +199,9 @@ watch(() => props.magnify,   (on) => {
   if (!on) { mouseLensUV.x = LENS_INACTIVE.x; mouseLensUV.y = LENS_INACTIVE.y }
   redraw()
 })
-watch(scrollY,               () => redraw())
-watch(scrollX,               () => redraw())
-watch(hoveredLine,           () => redraw())
-watch([selectionAnchor, selectionActive], () => redraw())
 
 // ── Mouse / wheel interaction ─────────────────────────────────────────────────
+// (the log does not undo the screen's bend when it maps a pointer: it never has)
 
 function canvasCoords(e: MouseEvent): [number, number] {
   if (!canvasEl.value) return [-1, -1]
@@ -431,235 +209,44 @@ function canvasCoords(e: MouseEvent): [number, number] {
   return [e.clientX - rect.left, e.clientY - rect.top]
 }
 
-function setScroll(y: number) {
-  scrollY.value = Math.max(0, Math.min(maxScrollY.value, y))
-  // Threshold for "at bottom" — within 4px counts as stuck (handles fractional)
-  stuckToBottom.value = scrollY.value >= maxScrollY.value - 4
-}
-
-function setScrollX(x: number) {
-  scrollX.value = Math.max(0, Math.min(maxScrollX.value, x))
-}
-
-function onCanvasWheel(e: WheelEvent) {
-  // Shift+wheel = horizontal scroll (matches Grid). Trackpad horizontal
-  // gesture (deltaX) routes to scrollX too.
-  if (e.shiftKey) {
-    setScrollX(scrollX.value + e.deltaY)
-  } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-    setScrollX(scrollX.value + e.deltaX)
-  } else {
-    setScroll(scrollY.value + e.deltaY)
-  }
-}
-
-// Pan-to-scroll — drag in either direction pans both axes (diagonal works).
-let panActive       = false
-let panStartX       = 0
-let panStartY       = 0
-let panStartScrollX = 0
-let panStartScrollY = 0
-let panMoved        = false
+function onCanvasWheel(e: WheelEvent) { model.wheel(e.deltaX, e.deltaY, e.shiftKey) }
 
 function onCanvasMouseDown(e: MouseEvent) {
-  panActive       = true
-  panMoved        = false
-  panStartX       = e.clientX
-  panStartY       = e.clientY
-  panStartScrollX = scrollX.value
-  panStartScrollY = scrollY.value
+  model.panStart(e.clientX, e.clientY)
   // Grab keyboard focus so arrow keys / page keys / Cmd+C work on the canvas.
   if (wrapEl.value) wrapEl.value.focus()
 }
 
-function onGlobalMouseMove(e: MouseEvent) {
-  if (panActive) {
-    const dx = panStartX - e.clientX
-    const dy = panStartY - e.clientY
-    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) panMoved = true
-    setScrollX(panStartScrollX + dx)
-    setScroll(panStartScrollY + dy)
-  }
-}
-
-function onGlobalMouseUp() {
-  if (panActive) {
-    panActive = false
-    if (panMoved) panMoved = false
-  }
-}
+function onGlobalMouseMove(e: MouseEvent) { model.panMove(e.clientX, e.clientY) }
+function onGlobalMouseUp() { model.panEnd() }
 
 // ── Touch handlers ─────────────────────────────────────────────────────────
 // Mobile browsers don't fire wheel events. Without these, swipe-to-scroll
-// inside the log canvas does nothing — the user is stuck on whatever the
-// initial scrollY was. We mirror the mouse-drag pan model: touchstart
-// captures the start position + current scroll; touchmove updates the
-// scroll based on finger delta; touchend clears the active flag.
+// inside the log canvas does nothing. We mirror the mouse-drag pan model.
 function onTouchStart(e: TouchEvent) {
   if (e.touches.length !== 1) return
   const t = e.touches[0]
-  panActive       = true
-  panMoved        = false
-  panStartX       = t.clientX
-  panStartY       = t.clientY
-  panStartScrollX = scrollX.value
-  panStartScrollY = scrollY.value
+  model.panStart(t.clientX, t.clientY)
   if (wrapEl.value) wrapEl.value.focus()
 }
 
 function onTouchMove(e: TouchEvent) {
-  if (!panActive || e.touches.length !== 1) return
+  if (!model.panning() || e.touches.length !== 1) return
   // preventDefault stops the browser from page-scrolling under the finger
   // while we're driving canvas-internal scroll.
   e.preventDefault()
-  const t  = e.touches[0]
-  const dx = panStartX - t.clientX
-  const dy = panStartY - t.clientY
-  if (Math.abs(dx) > 4 || Math.abs(dy) > 4) panMoved = true
-  setScrollX(panStartScrollX + dx)
-  setScroll(panStartScrollY + dy)
+  const t = e.touches[0]
+  model.panMove(t.clientX, t.clientY)
 }
 
-function onTouchEnd() {
-  if (panActive) {
-    panActive = false
-    if (panMoved) panMoved = false
-  }
-}
-
-/**
- * Map a click to a visualLines index. Returns -1 when click is outside the
- * rendered range (e.g. blank space below the last entry).
- */
-function clickedLine(e: MouseEvent): number {
-  const [, cy] = canvasCoords(e)
-  if (cy < 0) return -1
-  return lineHitTest(cy, scrollY.value, visualLines.value.length)
-}
+function onTouchEnd() { model.panEnd() }
 
 function onCanvasClick(e: MouseEvent) {
-  // Drag-pan ended at this position — don't treat as a selection click.
-  if (panMoved) { panMoved = false; return }
-
-  const li = clickedLine(e)
-  if (li < 0) {
-    // Click in blank area collapses selection.
-    selectionAnchor.value = -1
-    selectionActive.value = -1
-    return
-  }
-
-  if (e.shiftKey && selectionAnchor.value >= 0) {
-    selectionActive.value = li
-  } else {
-    selectionAnchor.value = li
-    selectionActive.value = li
-  }
+  const [, cy] = canvasCoords(e)
+  model.click(cy, e.shiftKey)
 }
 
-// ── Keyboard navigation ────────────────────────────────────────────────────
-// Mirrors the Grid's keyboard model: arrows move the highlight one line at
-// a time and auto-scroll to keep it visible; ←/→ scroll horizontally when
-// content is wider than the canvas; Page/Home/End jump farther.
-
-/**
- * Move the selection anchor + active by `delta` lines, scrolling the
- * selected line into view. If `extend` is true the anchor stays put and
- * only `active` moves (shift-arrow range extension); otherwise both
- * anchor and active move together (plain arrow collapses selection).
- */
-function moveSelection(delta: number, extend: boolean) {
-  const total = visualLines.value.length
-  if (total === 0) return
-  const startActive = selectionActive.value < 0 ? 0 : selectionActive.value
-  let next = Math.max(0, Math.min(total - 1, startActive + delta))
-  selectionActive.value = next
-  if (!extend || selectionAnchor.value < 0) selectionAnchor.value = next
-  // Mirror to hovered so hover highlight tracks keyboard focus too.
-  hoveredLine.value = next
-  const lineTop    = PADDING_Y + next * LINE_HEIGHT
-  const lineBottom = lineTop + LINE_HEIGHT
-  if (lineTop < scrollY.value) {
-    setScroll(lineTop)
-  } else if (lineBottom > scrollY.value + canvasH.value) {
-    setScroll(lineBottom - canvasH.value)
-  }
-}
-
-/**
- * Build a plain-text clipboard payload for the current selection: each
- * entry's timestamp (when shown) + text, joined by newlines. Wrapped
- * fragments belonging to the same entry are flattened back into one line
- * so a multi-fragment "long" entry copies as a single line, like the user
- * sees in their source log file.
- */
-function selectionAsText(): string {
-  const start = Math.min(selectionAnchor.value, selectionActive.value)
-  const end   = Math.max(selectionAnchor.value, selectionActive.value)
-  if (start < 0) return ''
-  const lines = visualLines.value
-  const seenEntries = new Set<number>()
-  const out: string[] = []
-  for (let i = start; i <= end && i < lines.length; i++) {
-    const l = lines[i]
-    if (seenEntries.has(l.entryIdx)) continue
-    seenEntries.add(l.entryIdx)
-    // Reconstruct the entry — concatenate all fragments belonging to entryIdx
-    let text = ''
-    for (let j = 0; j < lines.length; j++) {
-      if (lines[j].entryIdx === l.entryIdx) text += (text && !lines[j].isFirstFrag ? ' ' : '') + lines[j].text
-    }
-    out.push(l.timestamp ? `${l.timestamp}  ${text}` : text)
-  }
-  return out.join('\n')
-}
-
-async function copySelection() {
-  const text = selectionAsText()
-  if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch {
-    // Older browsers / non-secure contexts: fall back to a textarea + execCommand.
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.style.position = 'fixed'
-    ta.style.opacity  = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    try { document.execCommand('copy') } catch { /* give up silently */ }
-    document.body.removeChild(ta)
-  }
-}
-
-function onKeyDown(e: KeyboardEvent) {
-  // Cmd/Ctrl+C — copy current selection
-  if ((e.metaKey || e.ctrlKey) && (e.key === 'c' || e.key === 'C')) {
-    if (selectionAnchor.value >= 0) {
-      e.preventDefault()
-      void copySelection()
-    }
-    return
-  }
-  // Cmd/Ctrl+A — select all visible entries
-  if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
-    e.preventDefault()
-    selectionAnchor.value = 0
-    selectionActive.value = visualLines.value.length - 1
-    return
-  }
-  switch (e.key) {
-    case 'ArrowDown':  e.preventDefault(); moveSelection(1, e.shiftKey);  break
-    case 'ArrowUp':    e.preventDefault(); moveSelection(-1, e.shiftKey); break
-    case 'ArrowRight': e.preventDefault(); setScrollX(scrollX.value + LINE_HEIGHT * 2); break
-    case 'ArrowLeft':  e.preventDefault(); setScrollX(scrollX.value - LINE_HEIGHT * 2); break
-    case 'PageDown':   e.preventDefault(); setScroll(scrollY.value + canvasH.value); break
-    case 'PageUp':     e.preventDefault(); setScroll(scrollY.value - canvasH.value); break
-    case 'Home':       e.preventDefault(); setScroll(0); setScrollX(0); break
-    case 'End':        e.preventDefault(); setScroll(maxScrollY.value); break
-    case 'Escape':     selectionAnchor.value = -1; selectionActive.value = -1; break
-  }
-}
+function onKeyDown(e: KeyboardEvent) { model.keyDown(e) }
 
 function onCanvasMouseMove(e: MouseEvent) {
   if (props.magnify && canvasEl.value) {
@@ -669,12 +256,11 @@ function onCanvasMouseMove(e: MouseEvent) {
     redraw()
   }
   const [, cy] = canvasCoords(e)
-  if (cy < 0) { hoveredLine.value = -1; return }
-  hoveredLine.value = lineHitTest(cy, scrollY.value, visualLines.value.length)
+  model.hover(cy)
 }
 
 function onCanvasMouseLeave() {
-  hoveredLine.value = -1
+  model.leave()
   mouseLensUV.x = LENS_INACTIVE.x
   mouseLensUV.y = LENS_INACTIVE.y
   redraw()
@@ -684,14 +270,9 @@ function onCanvasMouseLeave() {
 
 defineExpose({
   /** Force-scroll to the latest entry. Resumes autoscroll. */
-  scrollToBottom() {
-    stuckToBottom.value = true
-    scrollY.value = maxScrollY.value
-  },
+  scrollToBottom() { model.scrollToBottom() },
   /** Programmatic scroll to a given line index (visual lines, not entry idx). */
-  scrollToLine(li: number) {
-    setScroll(PADDING_Y + li * LINE_HEIGHT)
-  },
+  scrollToLine(li: number) { model.scrollToLine(li) },
 })
 
 // ── ResizeObserver / IntersectionObserver / window listeners ──────────────────
@@ -739,7 +320,7 @@ onMounted(() => {
     window.visualViewport?.addEventListener('resize', scheduleResize)
 
     // Start at bottom on mount (typical for log views)
-    scrollY.value = maxScrollY.value
+    model.scrollY.value = model.maxScrollY.value
   })
 })
 
@@ -754,6 +335,8 @@ onUnmounted(() => {
   window.visualViewport?.removeEventListener('resize', scheduleResize)
   cancelAnimationFrame(resizeRaf)
   releaseRenderer()
+  model.dispose()
+  surface.dispose()
 })
 
 // ── Computed styles ───────────────────────────────────────────────────────────
