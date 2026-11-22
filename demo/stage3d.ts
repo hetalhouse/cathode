@@ -1,7 +1,7 @@
 /**
  * CathodeStage3D demo: a sortable, selectable, scrollable grid and a gauge in ONE three.js scene.
  * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion.
- * Double-click a title bar to fly the camera to face that panel; the – / □ buttons minimise and maximise.
+ * Double-click a title bar to fly the camera to face that panel;  the – / □ buttons minimise and maximise; drag a panel's bottom-right corner to resize it.
  */
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CathodeStage3D } from '../src/CathodeStage3D'
@@ -56,6 +56,7 @@ function setTilt(v: number) { gauge.update({ value: v, stance: v >= 0 ? 'net lon
 
 // ── stage ───────────────────────────────────────────────────────────────────
 const controlEvents: string[] = []
+const resizeEvents: { id: string; w: number; h: number }[] = []
 const before = new Map<string, ReturnType<CathodeStage3D['getCameraPose']>>()
 const stage = new CathodeStage3D({
   container: document.getElementById('stage')!,
@@ -63,6 +64,8 @@ const stage = new CathodeStage3D({
   cameraPosition: [0, 0.15, 3.3],
   // double-click a title bar → fly the camera to face that panel
   onPanelActivate: (id) => { const pose = stage.facingPose(id); if (pose) void stage.flyTo(pose) },
+  // a panel was resized by its corner handle (once, on release)
+  onPanelResized: (id, size) => { resizeEvents.push({ id, w: size.w, h: size.h }) },
   // the title-bar controls: the stage reports the click, the demo decides what it means
   onPanelControl: (id, control) => {
     controlEvents.push(`${id}:${control}`)
@@ -77,8 +80,8 @@ const stage = new CathodeStage3D({
     }
   },
 })
-stage.addPanel({ id: 'trades', title: 'Trades', content: grid,  position: [-0.78, 0, 0],    rotationY: 0.22,  look: { curvature }, controls: ['minimize', 'maximize'] })
-stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature }, controls: ['minimize', 'maximize'] })
+stage.addPanel({ id: 'trades', title: 'Trades', content: grid,  position: [-0.78, 0, 0],    rotationY: 0.22,  look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
+stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (idle) setInterval(() => setTilt(Math.sin(Date.now() / 4000) * 0.9), 2500)
 
-;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents }
+;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, resizeEvents }

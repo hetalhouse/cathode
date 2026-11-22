@@ -77,6 +77,8 @@ export interface CathodeStage3DOptions {
    * (minimize usually: stage.setPanelMinimized(id, !panel.minimized); maximize: fly the camera to fill the view, and back).
    */
   onPanelControl?: (id: string, control: PanelControl) => void
+  /** a panel was resized by dragging its corner (once, on release): its new size in logical px and its new centre (the top-left corner stays put) */
+  onPanelResized?: (id: string, size: { w: number; h: number }, pos: { x: number; y: number; z: number }) => void
 }
 
 /** a title-bar control: the stage draws it, hit-tests it and reports clicks (onPanelControl) */
@@ -102,9 +104,14 @@ export interface PanelOptions {
   controls?: PanelControl[]
   /** start collapsed to its title bar */
   minimized?: boolean
+  /** a corner handle drags the panel to a new size (needs `content.resize`); default false */
+  resizable?: boolean
+  /** resize limits in logical px (default 240x160 .. 1600x1000) */
+  minSize?: { w: number; h: number }
+  maxSize?: { w: number; h: number }
 }
 
-export interface PanelLayout { x: number; y: number; z: number; rotY: number; visible?: boolean; minimized?: boolean }
+export interface PanelLayout { x: number; y: number; z: number; rotY: number; visible?: boolean; minimized?: boolean; size?: { w: number; h: number } }
 
 export interface StagePick {
   panel: Panel3D
@@ -113,11 +120,16 @@ export interface StagePick {
   content: { x: number; y: number } | null
   /** on the bar: the title-bar control under the pointer, if any */
   control: PanelControl | null
+  /** on the body: the pointer is over the resize handle (the bottom-right corner of a resizable panel) */
+  handle: boolean
 }
 
 const BAR_PX = 26
 // title-bar controls: BTN_W x BTN_H boxes, BTN_GAP apart, BAR_PAD in from the bar's right edge
 const BTN_W = 20, BTN_H = 18, BTN_GAP = 4, BAR_PAD = 8
+// the resize handle: a HANDLE_PX square at the body's bottom-right corner (geometric — hit-tested on the plane's UV, so a bend can't move it)
+const HANDLE_PX = 16
+const DEFAULT_MIN = { w: 240, h: 160 }, DEFAULT_MAX = { w: 1600, h: 1000 }
 
 /** One panel: a surface mesh + a title bar, in a group the stage moves around. */
 export class Panel3D {
@@ -132,6 +144,12 @@ export class Panel3D {
 
   private _title: string
   readonly controls: PanelControl[]
+  readonly resizable: boolean
+  readonly minSize: { w: number; h: number }
+  readonly maxSize: { w: number; h: number }
+  private _grip: THREE.Mesh | null = null
+  /** the corner grip (only on a resizable panel) */
+  get grip(): THREE.Mesh | null { return this._grip }
   private _minimized = false
   private _maximized = false
   private hoverControl: PanelControl | null = null
@@ -143,6 +161,9 @@ export class Panel3D {
     this._title  = o.title ?? o.id
     this.controls = o.controls ?? []
     this.content = o.content
+    this.resizable = !!o.resizable && typeof o.content.resize === 'function'
+    this.minSize = o.minSize ?? DEFAULT_MIN
+    this.maxSize = o.maxSize ?? DEFAULT_MAX
     this.glow    = o.glow ?? true
     const s = o.content.surface
     if (s.mode !== 'world') throw new Error("CathodeStage3D panels need a CathodeSurface created with mode: 'world'")
@@ -161,6 +182,20 @@ export class Panel3D {
     this.body.userData.panel = this
     this.bar.userData.panel  = this
 
+    if (this.resizable) {
+      const g = HANDLE_PX / ppu
+      const gc = document.createElement('canvas'); gc.width = gc.height = 32
+      const gx = gc.getContext('2d')!
+      gx.strokeStyle = '#6ee7a7'; gx.lineWidth = 3; gx.lineCap = 'round'
+      gx.beginPath(); for (const k of [10, 18, 26]) { gx.moveTo(30, k); gx.lineTo(k, 30) } gx.stroke()   // three diagonal ticks
+      const gt = new THREE.CanvasTexture(gc); gt.colorSpace = THREE.SRGBColorSpace
+      this._grip = new THREE.Mesh(
+        new THREE.PlaneGeometry(g, g),
+        new THREE.MeshBasicMaterial({ map: gt, transparent: true, opacity: 0.55, depthWrite: false, toneMapped: false }),
+      )
+      this.group.add(this._grip)
+      this.placeGrip()
+    }
     if (o.visible === false) this.group.visible = false
     if (o.minimized) { this._minimized = true; this.body.visible = false }
     if (o.position) this.group.position.set(...o.position)
@@ -181,6 +216,42 @@ export class Panel3D {
     this.invalidateBar()
   }
 
+  private placeGrip() {
+    if (!this.grip) return
+    const ppu = this.stage.pxPerUnit
+    this.grip.position.set((this.content.width - HANDLE_PX) / 2 / ppu, -(this.content.height - HANDLE_PX) / 2 / ppu, 0.003)
+    this.grip.visible = !this._minimized
+  }
+
+  /** @internal the stage brightens the grip while the pointer is over the handle */
+  setHoverGrip(on: boolean) {
+    if (!this.grip) return
+    ;(this.grip.material as THREE.MeshBasicMaterial).opacity = on ? 1 : 0.55
+    this.stage.invalidate()
+  }
+
+  /**
+   * Resize to `w` x `h` logical px (clamped to minSize / maxSize): the content lays out for the new size, the surface's backing
+   * store follows, and the body / title bar / grip geometry is rebuilt. The panel's CENTRE stays where it is — the drag in the
+   * stage moves it so the top-left corner stays put. No-op (false) for a panel that is not resizable.
+   */
+  resize(w: number, h: number): boolean {
+    if (!this.resizable) return false
+    w = Math.round(Math.min(this.maxSize.w, Math.max(this.minSize.w, w)))
+    h = Math.round(Math.min(this.maxSize.h, Math.max(this.minSize.h, h)))
+    if (w === this.content.width && h === this.content.height) return false
+    this.content.resize!(w, h)
+    this.content.surface.resize(w, h, window.devicePixelRatio || 1)
+    const ppu = this.stage.pxPerUnit, bh = BAR_PX / ppu
+    this.body.geometry.dispose(); this.body.geometry = new THREE.PlaneGeometry(w / ppu, h / ppu)
+    this.bar.geometry.dispose();  this.bar.geometry  = new THREE.PlaneGeometry(w / ppu, bh)
+    this.bar.position.y = h / ppu / 2 + bh / 2
+    this.placeGrip()
+    this.dirty = true; this.barDirty = true
+    this.stage.invalidate()
+    return true
+  }
+
   get minimized(): boolean { return this._minimized }
   get maximized(): boolean { return this._maximized }
 
@@ -192,6 +263,7 @@ export class Panel3D {
     if (this._minimized === v) return
     this._minimized = v
     this.body.visible = !v
+    if (this.grip) this.grip.visible = !v
     this.invalidateBar()                // the control's glyph changes
     if (!v) this.invalidate()           // repaint what changed while it was collapsed
   }
@@ -311,6 +383,7 @@ export class Panel3D {
     this.bar.geometry.dispose()
     ;(this.bar.material as THREE.Material).dispose()
     this.barTexture.dispose()
+    if (this.grip) { this.grip.geometry.dispose(); const m = this.grip.material as THREE.MeshBasicMaterial; m.map?.dispose(); m.dispose() }
     this.content.dispose?.()
   }
 }
@@ -340,6 +413,8 @@ export class CathodeStage3D {
   private readonly passThrough: boolean
   private swallowClick = false
   private pressedControl: { panel: Panel3D; control: PanelControl } | null = null
+  private resizing: { panel: Panel3D; tl: THREE.Vector3; right: THREE.Vector3; up: THREE.Vector3; plane: THREE.Plane; moved: boolean } | null = null
+  private hoverGrip: Panel3D | null = null
   private hoverBar: Panel3D | null = null
   private cancelFly: (() => void) | null = null
 
@@ -521,12 +596,13 @@ export class CathodeStage3D {
 
   private raise(p: Panel3D) {
     p.body.renderOrder = p.bar.renderOrder = ++this.raiseCounter
+    if (p.grip) p.grip.renderOrder = p.body.renderOrder + 0.5
   }
 
   getLayout(): Record<string, PanelLayout> {
     const out: Record<string, PanelLayout> = {}
     for (const [id, p] of this.panels) {
-      out[id] = { x: p.group.position.x, y: p.group.position.y, z: p.group.position.z, rotY: p.group.rotation.y, visible: p.visible, minimized: p.minimized }
+      out[id] = { x: p.group.position.x, y: p.group.position.y, z: p.group.position.z, rotY: p.group.rotation.y, visible: p.visible, minimized: p.minimized, ...(p.resizable ? { size: { w: p.content.width, h: p.content.height } } : {}) }
     }
     return out
   }
@@ -539,6 +615,7 @@ export class CathodeStage3D {
       if (l.rotY !== undefined) p.group.rotation.y = l.rotY
       if (l.visible !== undefined) this.setPanelVisible(id, l.visible)
       if (l.minimized !== undefined) this.setPanelMinimized(id, l.minimized)
+      if (l.size) p.resize(l.size.w, l.size.h)   // (the panel's centre stays: restore a saved position AND size by applying both)
     }
     this.invalidate()
   }
@@ -609,7 +686,9 @@ export class CathodeStage3D {
     const part  = best.object === panel.bar ? 'bar' : 'body'
     const content = part === 'body' && best.uv ? panel.content.surface.contentPoint(best.uv.x, best.uv.y) : null
     const control = part === 'bar' && best.uv ? panel.controlAt(best.uv.x * panel.content.width, (1 - best.uv.y) * BAR_PX) : null
-    return { panel, part, content, control }
+    const handle = part === 'body' && panel.resizable && !panel.minimized && !!best.uv
+      && best.uv.x * panel.content.width > panel.content.width - HANDLE_PX && (1 - best.uv.y) * panel.content.height > panel.content.height - HANDLE_PX
+    return { panel, part, content, control, handle }
   }
 
   /**
@@ -645,6 +724,17 @@ export class CathodeStage3D {
     world.project(this.camera)
     const r = this.canvas.getBoundingClientRect()
     return { x: r.left + ((world.x + 1) / 2) * r.width, y: r.top + ((1 - world.y) / 2) * r.height }
+  }
+
+  /** Client point of a resizable panel's resize handle (for tests / tours), or null. */
+  clientPointForHandle(id: string): { x: number; y: number } | null {
+    const p = this.panels.get(id)
+    if (!p || !p.resizable) return null
+    p.group.updateWorldMatrix(true, true)
+    const ppu = this.pxPerUnit
+    const world = p.body.localToWorld(new THREE.Vector3((p.content.width / 2 - HANDLE_PX / 2) / ppu, -(p.content.height / 2 - HANDLE_PX / 2) / ppu, 0)).project(this.camera)
+    const rect = this.canvas.getBoundingClientRect()
+    return { x: rect.left + ((world.x + 1) / 2) * rect.width, y: rect.top + ((1 - world.y) / 2) * rect.height }
   }
 
   /** Client point of a title-bar control's centre (for tests / tours), or null. */
@@ -725,6 +815,9 @@ export class CathodeStage3D {
     } else if (hit.part === 'bar') {
       this.startDrag(hit.panel)
       this.setCursor('grabbing')
+    } else if (hit.handle) {
+      this.startResize(hit.panel)
+      this.setCursor('nwse-resize')
     } else {
       this.pressed = hit.panel
       this.send(hit.panel, 'down', e)
@@ -732,15 +825,18 @@ export class CathodeStage3D {
   }
 
   private onPointerMove(e: PointerEvent) {
+    if (this.resizing) { this.resizeTo(e); return }
     if (this.dragging) { this.dragTo(e); return }
     if (this.pressed) { this.send(this.pressed, 'drag', e); return }
     if (this.pressedControl) return
-    if (!this.accepts(e)) { this.setHover(null, e); this.setHoverBar(null, null); return }
+    if (!this.accepts(e)) { this.setHover(null, e); this.setHoverBar(null, null); this.setHoverGrip(null); return }
     const hit = this.pick(e.clientX, e.clientY)
-    this.setHover(hit && hit.part === 'body' ? hit.panel : null, e)
+    this.setHoverGrip(hit?.handle ? hit.panel : null)
+    this.setHover(hit && hit.part === 'body' && !hit.handle ? hit.panel : null, e)
     this.setHoverBar(hit && hit.part === 'bar' ? hit.panel : null, hit?.control ?? null)
     if (!hit) { this.setCursor(''); return }
     if (hit.part === 'bar') { this.setCursor(hit.control ? 'pointer' : 'grab'); return }
+    if (hit.handle) { this.setCursor('nwse-resize'); return }
     const cursor = this.send(hit.panel, 'move', e)
     if (cursor) this.setCursor(cursor)
   }
@@ -752,8 +848,23 @@ export class CathodeStage3D {
     panel?.setHoverControl(control)
   }
 
+  private setHoverGrip(panel: Panel3D | null) {
+    if (this.hoverGrip && this.hoverGrip !== panel) this.hoverGrip.setHoverGrip(false)
+    this.hoverGrip = panel
+    panel?.setHoverGrip(true)
+  }
+
   private onPointerUp(e: PointerEvent) {
     this.pressedControl = null
+    if (this.resizing) {
+      const r = this.resizing; this.resizing = null
+      if (r.moved) {
+        this.suppressClick = true
+        const g = r.panel.group.position
+        this.o.onPanelResized?.(r.panel.id, { w: r.panel.content.width, h: r.panel.content.height }, { x: g.x, y: g.y, z: g.z })
+      }
+      this.setCursor('')
+    }
     if (this.dragging) {
       if (this.dragging.moved) this.suppressClick = true
       const p = this.dragging.panel
@@ -798,6 +909,37 @@ export class CathodeStage3D {
     }
     const p = this.focusedId ? this.panels.get(this.focusedId) : null
     if (p?.content.key) { p.content.key(e); p.invalidate() }
+  }
+
+  // ── Resize (ray–plane on the panel's own plane; the TOP-LEFT corner stays put) ──────────────────────────
+
+  private startResize(panel: Panel3D) {
+    panel.group.updateWorldMatrix(true, true)
+    const q = panel.group.getWorldQuaternion(new THREE.Quaternion())
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(q)
+    const ppu = this.pxPerUnit
+    const tl = panel.body.localToWorld(new THREE.Vector3(-panel.content.width / ppu / 2, panel.content.height / ppu / 2, 0))
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, tl)
+    this.resizing = { panel, tl, right, up, plane, moved: false }
+  }
+
+  private resizeTo(e: PointerEvent) {
+    const r = this.resizing!
+    this.setRay(e.clientX, e.clientY)
+    const p = new THREE.Vector3()
+    if (!this.ray.ray.intersectPlane(r.plane, p)) return
+    const ppu = this.pxPerUnit
+    const d = p.sub(r.tl)
+    const w = Math.round(d.dot(r.right) * ppu), h = Math.round(-d.dot(r.up) * ppu)    // (the panel clamps to its limits)
+    const panel = r.panel
+    const cw = Math.round(Math.min(panel.maxSize.w, Math.max(panel.minSize.w, w)))
+    const ch = Math.round(Math.min(panel.maxSize.h, Math.max(panel.minSize.h, h)))
+    if (cw === panel.content.width && ch === panel.content.height) return
+    // keep the top-left corner where it is: the centre sits half the NEW size right of / below it
+    panel.group.position.copy(r.tl).addScaledVector(r.right, cw / ppu / 2).addScaledVector(r.up, -ch / ppu / 2)
+    panel.resize(cw, ch)
+    r.moved = true
   }
 
   // ── Drag to move (ray–plane on the panel's own plane) ───────────────────────

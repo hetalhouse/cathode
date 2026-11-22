@@ -44,6 +44,11 @@ export interface PanelContent {
    */
   pointer?(e: PanelPointerEvent): string | null | void
   key?(e: KeyboardEvent): void
+  /**
+   * The panel was resized: lay out for `width` x `height` logical px and update `this.width` / `this.height`. The stage
+   * resizes the surface's backing store and repaints afterwards. A content WITHOUT this cannot be resized.
+   */
+  resize?(width: number, height: number): void
   dispose?(): void
 }
 
@@ -52,7 +57,7 @@ export function surfaceContent(
   surface: CathodeSurface,
   width: number,
   height: number,
-  extra: Partial<Pick<PanelContent, 'attach' | 'pointer' | 'key' | 'dispose'>> = {},
+  extra: Partial<Pick<PanelContent, 'attach' | 'pointer' | 'key' | 'resize' | 'dispose'>> = {},
 ): PanelContent {
   return { surface, width, height, ...extra }
 }
@@ -126,12 +131,15 @@ export function gridContent(o: GridContentOptions): PanelContent & { model: Grid
     model.keyDown(e)
   }
 
-  return {
+  const content: PanelContent & { model: GridModel } = {
     model, surface, width: o.width, height: o.height,
     attach: (fn) => { invalidate = fn },
     pointer, key,
+    // more room → more columns / rows; the model re-clamps scroll and re-fits the columns to the new canvas
+    resize(w, h) { content.width = w; content.height = h; model.setViewport(w, h, w, h); invalidate() },
     dispose: () => { model.dispose(); surface.dispose() },
   }
+  return content
 }
 
 export interface GaugeContentProps {
@@ -212,9 +220,10 @@ export function gaugeContent(o: GaugeContentOptions): PanelContent & { update(p:
     raf = requestAnimationFrame(step)
   }
 
-  return {
+  const content: PanelContent & { update(p: Partial<GaugeContentProps>): void; readonly shown: number } = {
     surface, width: o.width, height: o.height,
     attach: (fn) => { invalidate = fn; animateTo() },   // the mount sweep: centre → value
+    resize(w, h) { content.width = w; content.height = h; invalidate() },   // the painter lays out for the canvas it is given
     update(p) {
       const moved = p.value !== undefined && p.value !== state.value
       state = { ...state, ...p }
@@ -223,4 +232,5 @@ export function gaugeContent(o: GaugeContentOptions): PanelContent & { update(p:
     get shown() { return shown },
     dispose: () => { cancelAnimationFrame(raf); invalidate = () => {}; surface.dispose() },
   }
+  return content
 }
