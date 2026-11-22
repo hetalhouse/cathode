@@ -5,13 +5,13 @@ import {
 import type { CSSProperties, Ref } from 'vue'
 import * as THREE from 'three'
 import {
-  drawCandle, CANDLE_THEME_COLORS, DEFAULT_VOLUME_FRACTION,
+  CANDLE_THEME_COLORS, DEFAULT_VOLUME_FRACTION,
   type OHLCVCandle, type PriceOverlay, type TradeMarker, type CandleColors,
 } from './CanvasCandle'
+import { CathodeSurface } from './CathodeSurface'
+import { useCandleModel } from './useCandleModel'
 import {
-  LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
-  createLensUniforms, writeLensUniforms, eventToLensUV,
-  LENS_INACTIVE, type MouseLensUV, curvatureToStrength,
+  eventToLensUV, LENS_INACTIVE, type MouseLensUV,
 } from './lensShader'
 import './cathode.css'
 
@@ -83,27 +83,23 @@ const canvasEl = ref<HTMLCanvasElement | null>(null)
 
 const mouseLensUV: MouseLensUV = { ...LENS_INACTIVE }
 
-// ── Canvas dimensions (set by sizeToContainer) ────────────────────────────────
+// ── The model ─────────────────────────────────────────────────────────────────
+// Scroll, zoom, the crosshair, the keyboard and the paint all live in useCandleModel.ts. This component
+// is the DOM presenter: it owns the canvas, the renderer and the DOM events, and maps each event into the
+// canvas space the model works in.
 
-const canvasW = ref(0)
-const canvasH = ref(0)
-
-// ── Interaction state ─────────────────────────────────────────────────────────
-//
-// scrollX  — px offset, positive = scrolled back in time (older candles).
-//            Anchored to the right edge by computeVisibleWindow.
-// zoomLevel — multiplier on props.slotW; wheel adjusts it. 1.0 = base zoom.
-// hover    — { x, y } in canvas coords, null when not over the chart.
-//            Drives the crosshair overlay drawn in drawCandle.
-
-const scrollX   = ref(0)
-const zoomLevel = ref(1)
-const hover     = ref<{ x: number; y: number } | null>(null)
-
-const ZOOM_MIN = 0.25
-const ZOOM_MAX = 6.0
-
-const effectiveSlotW = computed(() => Math.max(1, props.slotW * zoomLevel.value))
+const model = useCandleModel({
+  candles:        () => props.candles,
+  theme:          () => props.theme,
+  slotW:          () => props.slotW,
+  showVolume:     () => props.showVolume,
+  volumeFraction: () => props.volumeFraction,
+  overlays:       () => props.overlays,
+  markers:        () => props.markers,
+  compact:        () => props.compact,
+  colors:         () => props.colors,
+  host:           { redraw: () => redraw() },
+})
 
 // ── Three.js ──────────────────────────────────────────────────────────────────
 
@@ -123,83 +119,16 @@ function releaseRenderer() {
 }
 let scene:       THREE.Scene
 let camera:      THREE.OrthographicCamera
-let material:    THREE.ShaderMaterial
-let texture:     THREE.CanvasTexture
-let offCanvas:   HTMLCanvasElement
+let dpr = 1
 
-const VERT = `
-  varying vec2 vUv;
-  void main() {
-    vUv         = uv;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
-  }
-`
-
-const FRAG = `
-  uniform sampler2D uTex;
-  uniform float     uStrength;
-  uniform float     uScanlines;
-  uniform float     uVignette;
-  ${LENS_FRAG_UNIFORMS}
-
-  varying vec2 vUv;
-
-  vec2 barrel(vec2 uv) {
-    // Signed bend: magnitude from |strength|, direction applied after.
-    // CONVEX (+): classic barrel — corners sample past the texture → bezel.
-    // CONCAVE (−): the full 0.5.0 dish, plus a fit-to-content rescale. The
-    // raw inward map samples a shrunken region, so the texture's outer
-    // margin (headers, edge columns) was never displayed at high strength.
-    // Scaling the sampled field so the screen CORNERS land exactly on the
-    // texture corners guarantees every content pixel is drawn; the sampled
-    // range then overshoots [0,1] at the edge MIDPOINTS, which renders as
-    // the classic pincushion silhouette — content pinching inward on each
-    // side, corners touching, the header riding the bowed top edge.
-    vec2  cc   = uv - 0.5;
-    float as   = abs(uStrength);
-    float dist = dot(cc, cc) * as;
-    vec2  m    = cc + cc * (1.0 + dist) * dist * sign(uStrength);
-    if (uStrength < 0.0) {
-      float cd = 0.5 * as;                        // corner dist = |cc|²·as at (.5,.5)
-      float cp = 0.5 * (1.0 + cd) * cd;           // corner inward pull
-      m /= (1.0 - 2.0 * cp);                      // corners → exactly ±0.5
-    }
-    return vec2(0.5) + m;
-  }
-
-  ${LENS_FRAG_FN}
-
-  void main() {
-    vec2 lensUV = applyLens(vUv);
-    vec2 uv     = barrel(lensUV);
-
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-      gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
-      return;
-    }
-
-    vec4 color = texture2D(uTex, uv);
-
-    if (uScanlines > 0.5) {
-      if (mod(gl_FragCoord.y, 2.0) < 1.0) color.rgb *= 0.87;
-    }
-
-    if (uVignette > 0.5) {
-      vec2  vc   = uv - 0.5;
-      float vign = 1.0 - dot(vc, vc) * 0.6;   // softened falloff — see CathodeLog for rationale
-      color.rgb  *= clamp(vign, 0.0, 1.0);
-    }
-
-    ${LENS_FRAG_RING}
-
-    gl_FragColor = color;
-  }
-`
+// The CathodeSurface owns the offscreen canvas, its CanvasTexture and the barrel / scanlines /
+// vignette / lens shader; this component supplies the renderer + orthographic camera that present
+const surface = new CathodeSurface({
+  paint: (canvas, { dpr: d, glow }) => model.paint(canvas, { dpr: d, glow }),
+})
 
 function initThree() {
   if (!canvasEl.value || !wrapEl.value) return
-
-  offCanvas = document.createElement('canvas')
 
   // `flat` opts out of WebGL entirely — same render path as the WebGL
   // fallback, intentionally chosen to avoid context-cap eviction when
@@ -232,25 +161,7 @@ function initThree() {
 
   scene  = new THREE.Scene()
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
-
-  texture = new THREE.CanvasTexture(offCanvas)
-  texture.minFilter = THREE.LinearFilter
-  texture.magFilter = THREE.LinearFilter
-
-  material = new THREE.ShaderMaterial({
-    uniforms: {
-      uTex:       { value: texture },
-      uStrength:  { value: 0.0 },
-      uScanlines: { value: 1.0 },
-      uVignette:  { value: 1.0 },
-      ...createLensUniforms(),
-    },
-    vertexShader:   VERT,
-    fragmentShader: FRAG,
-    transparent:    true,
-  })
-
-  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material))
+  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), surface.material))
 
   sizeToContainer()
 }
@@ -262,30 +173,19 @@ function sizeToContainer() {
   const H = wrapEl.value.clientHeight
   if (!W || !H) return
 
-  // Same defensive guard as CathodeLog: skip when nothing actually changed,
-  // since setting offCanvas.width/height clears the canvas state — and
-  // ResizeObserver can fire spuriously during prop updates.
-  const sizeChanged = offCanvas.width !== W || offCanvas.height !== H
-  if (!sizeChanged) return
-
-  offCanvas.width  = W
-  offCanvas.height = H
-  canvasW.value    = W
-  canvasH.value    = H
+  // Same defensive guard as CathodeLog: skip when nothing actually changed, since setting a canvas
+  // size clears it — and ResizeObserver can fire spuriously during prop updates.
+  if (!surface.resize(W, H)) return
+  surface.setScreenSize(W, H)
+  dpr = surface.dpr
+  model.setViewport(W, H)
 
   if (renderer) {
-    if (texture) {
-      texture.dispose()
-      texture = new THREE.CanvasTexture(offCanvas)
-      texture.minFilter = THREE.LinearFilter
-      texture.magFilter = THREE.LinearFilter
-      if (material) material.uniforms.uTex.value = texture
-    }
-    renderer.setPixelRatio(window.devicePixelRatio || 1)
+    renderer.setPixelRatio(dpr)
     renderer.setSize(W, H)
   } else if (canvasEl.value) {
-    canvasEl.value.width  = W
-    canvasEl.value.height = H
+    canvasEl.value.width  = Math.round(W * dpr)
+    canvasEl.value.height = Math.round(H * dpr)
     canvasEl.value.style.width  = W + 'px'
     canvasEl.value.style.height = H + 'px'
   }
@@ -296,24 +196,11 @@ function sizeToContainer() {
 // ── Redraw ────────────────────────────────────────────────────────────────────
 
 function redraw() {
-  if (!offCanvas?.width) return
+  if (!surface.canvas.width) return
 
   if (webglFailed) {
     if (!canvasEl.value) return
-    drawCandle(offCanvas, {
-      candles:        props.candles,
-      slotW:          effectiveSlotW.value,
-      scrollX:        scrollX.value,
-      theme:          props.theme,
-      glow:           false,
-      showVolume:     props.showVolume,
-      volumeFraction: props.volumeFraction,
-      hover:          hover.value,
-      overlays:       props.overlays,
-      markers:        props.markers,
-      compact:        props.compact,
-      colors:         props.colors,
-    })
+    surface.paintOnly(false)
     const ctx2d = canvasEl.value.getContext('2d')
     if (ctx2d) {
       // Clear before composite — `none`/`paper` themes have a transparent
@@ -321,57 +208,35 @@ function redraw() {
       // Without this, translucent overlays (BB band fillAlpha) accumulate
       // into solid colour after ~13 frames and axis/OHLCV labels smear.
       ctx2d.clearRect(0, 0, canvasEl.value.width, canvasEl.value.height)
-      ctx2d.drawImage(offCanvas, 0, 0)
+      ctx2d.drawImage(surface.canvas, 0, 0)
     }
     return
   }
 
-  if (!renderer || !material || !texture) return
+  if (!renderer) return
 
   const isPaper = props.theme === 'paper'
-
-  material.uniforms.uStrength.value  = curvatureToStrength(props.curvature)
-  material.uniforms.uScanlines.value = (props.scanlines && !isPaper) ? 1.0 : 0.0
-  material.uniforms.uVignette.value  = isPaper ? 0.0 : 1.0
-  writeLensUniforms(material, props.magnify, mouseLensUV, offCanvas.width, offCanvas.height)
-
-  drawCandle(offCanvas, {
-    candles:        props.candles,
-    slotW:          effectiveSlotW.value,
-    scrollX:        scrollX.value,
-    theme:          props.theme,
-    glow:           props.glow,
-    showVolume:     props.showVolume,
-    volumeFraction: props.volumeFraction,
-    hover:          hover.value,
-    overlays:       props.overlays,
-    markers:        props.markers,
-    compact:        props.compact,
-    colors:         props.colors,
+  surface.setLook({
+    curvature: props.curvature,
+    scanlines: props.scanlines && !isPaper,
+    vignette:  !isPaper,
+    magnify:   props.magnify,
   })
-
-  texture.needsUpdate = true
+  surface.setLens(props.magnify ? mouseLensUV : null)
+  surface.syncUniforms()
+  surface.paint(props.glow)
   renderer.render(scene, camera)
 }
 
-// ── Prop watchers — uniform-only updates avoid the canvas-clear cycle ─────────
+// ── Look-prop redraws (the data props are watched by the model) ───────────────
 
-watch(() => props.theme,          () => redraw())
-watch(() => props.curvature,      () => redraw())
-watch(() => props.scanlines,      () => redraw())
-watch(() => props.glow,           () => redraw())
-watch(() => props.showVolume,     () => redraw())
-watch(() => props.volumeFraction, () => redraw())
-watch(() => props.slotW,          () => redraw())
-watch(() => props.candles,        () => redraw(), { deep: false })
-watch(() => props.overlays,       () => redraw(), { deep: false })
-watch(() => props.markers,        () => redraw(), { deep: false })
-watch(() => props.compact,        () => redraw())
-watch(() => props.magnify,        (on) => {
+watch(() => props.curvature, () => redraw())
+watch(() => props.scanlines, () => redraw())
+watch(() => props.glow,      () => redraw())
+watch(() => props.magnify,   (on) => {
   if (!on) { mouseLensUV.x = LENS_INACTIVE.x; mouseLensUV.y = LENS_INACTIVE.y }
   redraw()
 })
-watch(() => props.colors,         () => redraw(), { deep: true })
 
 // `flat` is a mount-time decision — once a canvas element has been used
 // for WebGL the browser locks it (getContext('2d') returns null), so a
@@ -380,10 +245,6 @@ watch(() => props.colors,         () => redraw(), { deep: true })
 watch(() => props.flat, () => {
   console.warn('[CathodeCandle] `flat` is mount-time only; remount the component (e.g. with :key) to switch pipelines.')
 })
-watch(scrollX,                    () => redraw())
-watch(zoomLevel,                  () => redraw())
-watch(hover,                      () => redraw())
-watch(effectiveSlotW,             () => redraw())
 
 // ── ResizeObserver / IntersectionObserver / window listeners ──────────────────
 
@@ -408,6 +269,7 @@ function onContextRestored() {
 }
 
 // ── Mouse / wheel interaction ─────────────────────────────────────────────────
+// (the chart does not undo the screen's bend when it maps a pointer: it never has)
 
 function canvasCoords(e: MouseEvent): [number, number] {
   if (!canvasEl.value) return [-1, -1]
@@ -415,111 +277,22 @@ function canvasCoords(e: MouseEvent): [number, number] {
   return [e.clientX - rect.left, e.clientY - rect.top]
 }
 
-/**
- * Clamp scrollX to [0, maxScrollX] where max keeps at least one candle
- * visible at the right edge. Without this clamp, fast pan can run scrollX
- * past the available range and present a blank chart.
- */
-function clampScroll(s: number): number {
-  const sw = effectiveSlotW.value
-  if (sw <= 0) return 0
-  const total = props.candles?.length ?? 0
-  // Right edge anchored: scrollX 0 = newest candle on right. Max scroll is
-  // when the OLDEST candle is on the left. Total slots minus visible slots.
-  const visible = Math.max(1, Math.floor((canvasW.value || 1) / sw))
-  const maxScrollSlots = Math.max(0, total - visible)
-  return Math.max(0, Math.min(s, maxScrollSlots * sw))
-}
-
 function onCanvasWheel(e: WheelEvent) {
-  // Trackpad: deltaX is horizontal scroll, deltaY is zoom.
-  // Mouse wheel: shift+deltaY scrolls horizontally, plain deltaY zooms.
-  if (e.deltaX !== 0 || (e.shiftKey && e.deltaY !== 0)) {
-    const dx = e.deltaX !== 0 ? e.deltaX : e.deltaY
-    scrollX.value = clampScroll(scrollX.value + dx)
-    return
-  }
-  if (e.deltaY === 0) return
-  // Zoom — anchor on the candle at the cursor so the user's focus stays
-  // under the cursor as the chart scales. (Otherwise zoom feels detached.)
   const [cx] = canvasCoords(e)
-  const sw     = effectiveSlotW.value
-  if (cx >= 0 && sw > 0 && props.candles?.length) {
-    // Candle index under cursor before zoom
-    const visible    = Math.max(1, Math.floor((canvasW.value || 1) / sw))
-    const firstIdx   = Math.max(0, props.candles.length - visible - Math.floor(scrollX.value / sw))
-    const idxAtCursor = firstIdx + (cx - 8 /* PADDING_LEFT */) / sw
-    // Apply zoom (negative deltaY = wheel up = zoom in)
-    const factor   = Math.exp(-e.deltaY * 0.0015)
-    const newZoom  = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel.value * factor))
-    zoomLevel.value = newZoom
-    const newSw      = props.slotW * newZoom
-    const newVisible = Math.max(1, Math.floor((canvasW.value || 1) / newSw))
-    // Solve for scrollX such that the same candle stays under the cursor:
-    // idxAtCursor = (props.candles.length - newVisible - Math.floor(scrollX / newSw)) + (cx - 8) / newSw
-    const desiredFirst = idxAtCursor - (cx - 8) / newSw
-    const slotsScrolled = Math.max(0, props.candles.length - newVisible - desiredFirst)
-    scrollX.value = clampScroll(slotsScrolled * newSw)
-  } else {
-    const factor = Math.exp(-e.deltaY * 0.0015)
-    zoomLevel.value = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel.value * factor))
-  }
+  model.wheel(e.deltaX, e.deltaY, e.shiftKey, cx)
 }
-
-// Click-drag pan
-let panActive       = false
-let panStartX       = 0
-let panStartScrollX = 0
 
 function onCanvasMouseDown(e: MouseEvent) {
   if (e.button !== 0) return   // only left-click
-  panActive       = true
-  panStartX       = e.clientX
-  panStartScrollX = scrollX.value
-  // Hide crosshair while panning — it's distracting and the readout would lag
-  hover.value = null
+  model.panStart(e.clientX)
   // Grab focus so arrow / shift-arrow keys route to the chart.
   if (wrapEl.value) wrapEl.value.focus()
 }
 
-// ── Keyboard navigation ────────────────────────────────────────────────────
-// ←/→ pan one candle (Shift = ten); ↑/↓ zoom in/out (same path as wheel).
-function applyZoom(direction: 1 | -1) {
-  const factor = Math.exp(direction * 0.18)
-  zoomLevel.value = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomLevel.value * factor))
-  scrollX.value   = clampScroll(scrollX.value)
-}
+function onKeyDown(e: KeyboardEvent) { model.keyDown(e) }
 
-function onKeyDown(e: KeyboardEvent) {
-  // Pan step in candle-slots. Default of 3 (vs 1) makes each key press
-  // visibly move the chart even after zoom-in; shift jumps a screenful.
-  const sw   = effectiveSlotW.value
-  const step = e.shiftKey ? 20 : 3
-  switch (e.key) {
-    case 'ArrowLeft':  e.preventDefault(); scrollX.value = clampScroll(scrollX.value + sw * step); break
-    case 'ArrowRight': e.preventDefault(); scrollX.value = clampScroll(scrollX.value - sw * step); break
-    case 'ArrowUp':    e.preventDefault(); applyZoom(1); break
-    case 'ArrowDown':  e.preventDefault(); applyZoom(-1); break
-    case 'Home':       e.preventDefault(); scrollX.value = clampScroll(Number.MAX_SAFE_INTEGER); break
-    case 'End':        e.preventDefault(); scrollX.value = 0; break
-  }
-}
-
-function onGlobalMouseMove(e: MouseEvent) {
-  if (panActive) {
-    // Direct-manipulation feel: grab and drag the chart. Drag RIGHT exposes
-    // older candles on the left (scrollX increases). Drag LEFT pulls newer
-    // candles into view (scrollX decreases — already clamped to 0 at the
-    // right edge so a leftward drag from "newest visible" does nothing).
-    const dx = e.clientX - panStartX
-    scrollX.value = clampScroll(panStartScrollX + dx)
-    return
-  }
-}
-
-function onGlobalMouseUp() {
-  panActive = false
-}
+function onGlobalMouseMove(e: MouseEvent) { model.panMove(e.clientX) }
+function onGlobalMouseUp() { model.panEnd() }
 
 // ── Touch handlers ─────────────────────────────────────────────────────────
 // Mobile browsers don't fire wheel events. Without these, swipe-pan inside
@@ -528,22 +301,16 @@ function onGlobalMouseUp() {
 // on the left → scrollX increases).
 function onTouchStart(e: TouchEvent) {
   if (e.touches.length !== 1) return
-  const t = e.touches[0]
-  panActive       = true
-  panStartX       = t.clientX
-  panStartScrollX = scrollX.value
-  hover.value     = null
+  model.panStart(e.touches[0].clientX)
 }
 
 function onTouchMove(e: TouchEvent) {
-  if (!panActive || e.touches.length !== 1) return
+  if (!model.panning() || e.touches.length !== 1) return
   e.preventDefault()
-  const t  = e.touches[0]
-  const dx = t.clientX - panStartX
-  scrollX.value = clampScroll(panStartScrollX + dx)
+  model.panMove(e.touches[0].clientX)
 }
 
-function onTouchEnd() { panActive = false }
+function onTouchEnd() { model.panEnd() }
 
 function onCanvasMouseMove(e: MouseEvent) {
   if (props.magnify && canvasEl.value) {
@@ -552,14 +319,12 @@ function onCanvasMouseMove(e: MouseEvent) {
     mouseLensUV.y = uv.y
     redraw()
   }
-  if (panActive) return
   const [cx, cy] = canvasCoords(e)
-  if (cx < 0 || cy < 0) { hover.value = null; return }
-  hover.value = { x: cx, y: cy }
+  model.hoverAt(cx, cy)
 }
 
 function onCanvasMouseLeave() {
-  hover.value = null
+  model.leave()
   mouseLensUV.x = LENS_INACTIVE.x
   mouseLensUV.y = LENS_INACTIVE.y
   redraw()
@@ -599,6 +364,8 @@ onUnmounted(() => {
   window.visualViewport?.removeEventListener('resize', scheduleResize)
   cancelAnimationFrame(resizeRaf)
   releaseRenderer()
+  model.dispose()
+  surface.dispose()
 })
 
 // ── Computed styles ───────────────────────────────────────────────────────────

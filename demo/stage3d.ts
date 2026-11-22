@@ -1,12 +1,13 @@
 /**
  * CathodeStage3D demo: a sortable, selectable, scrollable grid and a gauge in ONE three.js scene.
- * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion · ?log=1 adds a log panel.
+ * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion · ?log=1 adds a log panel · ?candle=1 adds a candle chart.
  * Double-click a title bar to fly the camera to face that panel;  the – / □ buttons minimise and maximise; drag a panel's bottom-right corner to resize it.
  */
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CathodeStage3D } from '../src/CathodeStage3D'
 import type { StageControls } from '../src/CathodeStage3D'
-import { gridContent, gaugeContent, logContent } from '../src/panelContent'
+import { gridContent, gaugeContent, logContent, candleContent } from '../src/panelContent'
+import { candles as candleSeries, overlays as candleOverlays, markers as candleMarkers } from './candleData'
 import type { LogEntry } from '../src/CanvasLog'
 
 const q = new URLSearchParams(location.search)
@@ -70,6 +71,16 @@ const log = q.get('log') === '1' ? logContent({ width: 560, height: 300, entries
 /** append `n` entries (replace the array — the content notices the replacement) */
 function appendLog(n = 1) { const base = logEntries.length; logEntries = [...logEntries, ...Array.from({ length: n }, (_, i) => mkEntry(base + i))]; log?.update({ entries: logEntries }) }
 
+// ── candle chart (candleContent: ?candle=1) — crosshair / zoom at the cursor / pan on a fixed series ──────
+const candle = q.get('candle') === '1'
+  ? candleContent({ width: 600, height: 320, candles: candleSeries, overlays: candleOverlays, markers: candleMarkers, theme: 'phosphor' }) : null
+/** append `n` candles (replace the array — the content notices the replacement) */
+function appendCandles(n = 1) {
+  const out = [...candleSeries]
+  for (let i = 0; i < n; i++) { const l = out[out.length - 1]; out.push({ start: l.start + 3_600_000, open: l.close, high: l.close * 1.01, low: l.close * 0.99, close: l.close * 1.004, volume: 1500 }) }
+  candleSeries.splice(0, candleSeries.length, ...out); candle?.update({ candles: out })
+}
+
 // ── stage ───────────────────────────────────────────────────────────────────
 const controlEvents: string[] = []
 const resizeEvents: { id: string; w: number; h: number }[] = []
@@ -99,6 +110,7 @@ const stage = new CathodeStage3D({
 stage.addPanel({ id: 'trades', title: 'Trades', content: grid,  position: [-0.78, 0, 0],    rotationY: 0.22,  look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (log) stage.addPanel({ id: 'log', title: 'Log', content: log, position: [-0.45, -1.1, 0.1], rotationY: 0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
+if (candle) stage.addPanel({ id: 'candle', title: 'BTC-USD · 1h', content: candle, position: [0.35, -1.1, 0.1], rotationY: -0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (idle) setInterval(() => setTilt(Math.sin(Date.now() / 4000) * 0.9), 2500)
 
-;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, resizeEvents, log, appendLog }
+;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, resizeEvents, log, appendLog, candle, appendCandles, candleCount: () => candleSeries.length }
