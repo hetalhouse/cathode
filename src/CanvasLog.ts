@@ -282,18 +282,23 @@ export interface DrawLogOpts {
    */
   selectionStart: number
   selectionEnd:   number
+  /** backing-store pixels per logical px (default 1): the picture is drawn in LOGICAL px and scaled */
+  dpr?:           number
 }
 
 export function drawLog(canvas: HTMLCanvasElement, opts: DrawLogOpts): void {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  const W = canvas.width
-  const H = canvas.height
+  const dpr = opts.dpr ?? 1
+  const W = canvas.width / dpr
+  const H = canvas.height / dpr
   const c = LOG_THEME_COLORS[opts.theme] ?? LOG_THEME_COLORS['none']
 
-  // Background
-  ctx.clearRect(0, 0, W, H)
+  // Background (cleared in backing-store px; everything after is drawn in logical px)
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.fillStyle = c.bg
   ctx.fillRect(0, 0, W, H)
 

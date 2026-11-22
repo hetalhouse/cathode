@@ -1,12 +1,13 @@
 /**
  * CathodeStage3D demo: a sortable, selectable, scrollable grid and a gauge in ONE three.js scene.
- * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion.
+ * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion · ?log=1 adds a log panel.
  * Double-click a title bar to fly the camera to face that panel;  the – / □ buttons minimise and maximise; drag a panel's bottom-right corner to resize it.
  */
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CathodeStage3D } from '../src/CathodeStage3D'
 import type { StageControls } from '../src/CathodeStage3D'
-import { gridContent, gaugeContent } from '../src/panelContent'
+import { gridContent, gaugeContent, logContent } from '../src/panelContent'
+import type { LogEntry } from '../src/CanvasLog'
 
 const q = new URLSearchParams(location.search)
 const curvature = Number(q.get('curv') ?? 12)
@@ -54,6 +55,21 @@ const gauge = gaugeContent({
 })
 function setTilt(v: number) { gauge.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) }
 
+// ── log (logContent: ?log=1) — scroll / follow-the-tail / select / copy, on fixed data ────────────────────
+const LEVELS: NonNullable<LogEntry['level']>[] = ['info', 'info', 'success', 'warn', 'error', 'debug']
+const T0 = Date.UTC(2026, 10, 22, 14, 0, 0)
+const mkEntry = (i: number): LogEntry => ({
+  ts: T0 + i * 7_000, level: LEVELS[i % LEVELS.length],
+  text: i % 11 === 4 ? `#${i} a deliberately long entry that has to wrap across several visual lines in a narrow panel, so the line count depends on the panel's width`
+    : `#${i} scanner cycle ${i * 3} complete — ${i % 5} candidates passed the filter`,
+})
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const fmtTs = (ts: number | string) => { const d = new Date(ts as number); return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}` }
+let logEntries = Array.from({ length: 80 }, (_, i) => mkEntry(i))
+const log = q.get('log') === '1' ? logContent({ width: 560, height: 300, entries: logEntries, theme: 'phosphor', formatTs: fmtTs }) : null
+/** append `n` entries (replace the array — the content notices the replacement) */
+function appendLog(n = 1) { const base = logEntries.length; logEntries = [...logEntries, ...Array.from({ length: n }, (_, i) => mkEntry(base + i))]; log?.update({ entries: logEntries }) }
+
 // ── stage ───────────────────────────────────────────────────────────────────
 const controlEvents: string[] = []
 const resizeEvents: { id: string; w: number; h: number }[] = []
@@ -82,6 +98,7 @@ const stage = new CathodeStage3D({
 })
 stage.addPanel({ id: 'trades', title: 'Trades', content: grid,  position: [-0.78, 0, 0],    rotationY: 0.22,  look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
+if (log) stage.addPanel({ id: 'log', title: 'Log', content: log, position: [-0.45, -1.1, 0.1], rotationY: 0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (idle) setInterval(() => setTilt(Math.sin(Date.now() / 4000) * 0.9), 2500)
 
-;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, resizeEvents }
+;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, resizeEvents, log, appendLog }
