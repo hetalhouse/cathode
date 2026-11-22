@@ -106,7 +106,6 @@ const BAR_PX = 26
 /** One panel: a surface mesh + a title bar, in a group the stage moves around. */
 export class Panel3D {
   readonly id: string
-  readonly title: string
   readonly content: PanelContent
   readonly group = new THREE.Group()
   readonly body: THREE.Mesh
@@ -115,12 +114,13 @@ export class Panel3D {
   dirty = true
   barDirty = true
 
+  private _title: string
   private barCanvas = document.createElement('canvas')
   private barTexture: THREE.CanvasTexture
 
   constructor(readonly stage: CathodeStage3D, o: PanelOptions) {
     this.id      = o.id
-    this.title   = o.title ?? o.id
+    this._title  = o.title ?? o.id
     this.content = o.content
     this.glow    = o.glow ?? true
     const s = o.content.surface
@@ -147,6 +147,16 @@ export class Panel3D {
 
     s.resize(o.content.width, o.content.height, window.devicePixelRatio || 1)
     o.content.attach?.(() => this.invalidate())
+  }
+
+  /** the title bar's text */
+  get title(): string { return this._title }
+
+  /** Change the title bar's text (e.g. a live count: "Open positions (6)"). Repaints only the bar, and only if it changed. */
+  setTitle(title: string) {
+    if (title === this._title) return
+    this._title = title
+    this.invalidateBar()
   }
 
   get visible(): boolean { return this.group.visible }
@@ -201,7 +211,7 @@ export class Panel3D {
     ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
     ctx.textBaseline = 'middle'
     ctx.fillStyle = focused ? '#b6f5d2' : '#6fae8f'
-    ctx.fillText(this.title, 10, H / 2 - 1)
+    ctx.fillText(this._title, 10, H / 2 - 1, W - 20)   // a long title squeezes to fit the bar instead of running off it
     this.barTexture.needsUpdate = true
   }
 
