@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.16.0 — 2026-11-22
+
+**Log and Candle as stage panels.** `CathodeStage3D` could host a grid and a gauge; it can now host a log and a candle chart too.
+Each follows the grid's recipe — the component's logic moves into a **headless model**, the component becomes a presenter over that model and
+a shared `CathodeSurface`, and a `…Content()` adapter puts the same model on a stage. The two components behave exactly as before (pinned by
+golden specs generated from the originals — see below). All additive.
+
+- **`useLogModel`** — the log's logic, headless: entries → wrapped visual lines, vertical / horizontal scroll with **follow-the-tail**, hover,
+  Excel-style line selection, keyboard (arrows / page / home / end / Cmd+A / Cmd+C / Escape), copy (the **entries**: timestamp + text, wrapped
+  fragments rejoined), pan-to-scroll, and the paint. Canvas-space input; no DOM events or renderer.
+- **`logContent()`** — the log as a stage panel: wheel, drag-pan (a pan is not a selection click), hover, click / shift-click, keys,
+  `update({ entries, theme, wordWrap, … })`, and a resize that re-wraps (a log that was following the tail keeps following).
+- **`useCandleModel`** — the chart's logic, headless: scroll anchored on the newest candle (clamped), **wheel zoom anchored on the candle under the
+  cursor** (0.25–6×), shift-wheel / trackpad scroll, pan-to-scroll, the hover crosshair, the keyboard (←/→ pan, ↑/↓ zoom, Shift = a screenful,
+  Home / End), and the paint.
+- **`candleContent()`** — the candle chart as a stage panel: crosshair + OHLCV readout, zoom at the cursor, scroll, drag-pan, keys,
+  `update({ candles, overlays, markers, theme, slotW, … })`, and a resize that re-fits the chart (more room, more candles).
+- **`CathodeLog` and `CathodeCandle` are presenters** over those models and the shared `CathodeSurface` (each component's private copy of the
+  barrel / scanline / vignette / lens shader is gone). Behaviour is unchanged: `tests/log-golden.spec.ts` and `tests/candle-golden.spec.ts` were
+  generated from the ORIGINAL components (scripted real input on fixed data, hashing the canvas after every step, in three configurations each) and
+  are identical after the refactor. `CathodeCandle`'s `flat` 2D pipeline and `preserveDrawingBuffer` (`toDataURL` export) are kept.
+- **Crisper on high-dpi screens.** `drawLog` takes an optional `dpr` (default 1) and both components now keep a logical × dpr backing store, like
+  the grid — text and candles are drawn at physical resolution instead of upscaled from CSS px. At dpr 1 the output is byte-identical.
+
+New exports: `useLogModel`, `useCandleModel`, `logContent`, `candleContent`, types `LogModel` / `LogModelOptions` / `LogHost` / `LogPaintOpts`,
+`CandleModel` / `CandleModelOptions` / `CandleHost` / `CandlePaintOpts`, `LogContentProps` / `LogContentOptions`, `CandleContentProps` /
+`CandleContentOptions`. New option: `DrawLogOpts.dpr`.
+
+Noticed and left as-is (kept for byte parity): in `CathodeLog`, a drag-pan ends with a click at the release point that selects that line (the model
+resets its "moved" flag on mouse-up, before the click arrives). `logContent` guards against it on the stage.
+
 ## 0.15.0 — 2026-11-22
 
 **Window controls for stage panels: minimise, maximise, resize.** A `CathodeStage3D` panel could be moved and faced but not

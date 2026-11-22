@@ -42,10 +42,10 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     scanlines: boolean;
     magnify: boolean;
     theme: "none" | "phosphor" | "amber" | "paper";
-    bendField: boolean;
+    slotW: number;
     showVolume: boolean;
     volumeFraction: number;
-    slotW: number;
+    bendField: boolean;
     minCellW: number;
     cellAspect: number;
 }, {}, {}, {}, string, import("vue").ComponentProvideOptions, false, {}, any>;

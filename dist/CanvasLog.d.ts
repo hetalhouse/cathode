@@ -89,6 +89,8 @@ export interface DrawLogOpts {
      */
     selectionStart: number;
     selectionEnd: number;
+    /** backing-store pixels per logical px (default 1): the picture is drawn in LOGICAL px and scaled */
+    dpr?: number;
 }
 export declare function drawLog(canvas: HTMLCanvasElement, opts: DrawLogOpts): void;
 /**

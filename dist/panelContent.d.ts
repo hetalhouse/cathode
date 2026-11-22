@@ -9,6 +9,10 @@
 import { CathodeSurface } from './CathodeSurface';
 import type { GridModel, GridEmit } from './useGridModel';
 import type { ColDef } from './types';
+import type { LogModel } from './useLogModel';
+import type { LogEntry } from './CanvasLog';
+import type { CandleModel } from './useCandleModel';
+import type { OHLCVCandle, PriceOverlay, TradeMarker, CandleColors } from './CanvasCandle';
 import type { GaugeItem, GaugeColors, GaugeMark, GaugeMeter } from './CanvasGauge';
 export type PanelPointerKind = 'move' | 'down' | 'up' | 'click' | 'leave' | 'wheel' | 'drag';
 export interface PanelPointerEvent {
@@ -67,6 +71,62 @@ export interface GridContentOptions {
  */
 export declare function gridContent(o: GridContentOptions): PanelContent & {
     model: GridModel;
+};
+export interface LogContentProps {
+    entries: LogEntry[];
+    /** 'none' = transparent (glass); built-ins: phosphor | amber | paper */
+    theme?: 'none' | 'phosphor' | 'amber' | 'paper';
+    showTimestamps?: boolean;
+    formatTs?: (ts: number | string) => string;
+    /** wrap long lines to the panel width (default true) */
+    wordWrap?: boolean;
+    /** ring-buffer cap on rendered entries; 0 = no cap */
+    maxLines?: number;
+}
+export interface LogContentOptions extends LogContentProps {
+    width: number;
+    height: number;
+}
+/**
+ * A log for the stage: a headless LogModel + a world-mode surface, with the pointer, wheel and keys routed into the model —
+ * scroll (wheel / drag-pan), follow-the-tail, hover, click / shift-click line selection, arrows / page / home / end, Cmd+A,
+ * Cmd+C. `update()` swaps the entries (or any other prop): a log that was following the tail keeps following it.
+ */
+export declare function logContent(o: LogContentOptions): PanelContent & {
+    model: LogModel;
+    update(p: Partial<LogContentProps>): void;
+};
+export interface CandleContentProps {
+    candles: OHLCVCandle[];
+    /** 'none' = transparent (glass); built-ins: phosphor | amber | paper */
+    theme?: 'none' | 'phosphor' | 'amber' | 'paper';
+    /** px slot width per candle at zoom 1 (default 8) */
+    slotW?: number;
+    /** show the volume pane (default true) */
+    showVolume?: boolean;
+    /** 0..1, the fraction of the pane given to volume bars */
+    volumeFraction?: number;
+    /** indicator series drawn over the price pane (BB, EMA, SMA, hlines …) */
+    overlays?: PriceOverlay[];
+    /** trade entry / exit triangles */
+    markers?: TradeMarker[];
+    /** thumbnail mode: no time axis / interval badge, sparser price labels */
+    compact?: boolean;
+    /** per-instance palette overrides */
+    colors?: Partial<CandleColors>;
+}
+export interface CandleContentOptions extends CandleContentProps {
+    width: number;
+    height: number;
+}
+/**
+ * A candle chart for the stage: a headless CandleModel + a world-mode surface, with the pointer, wheel and keys routed into
+ * the model — the hover crosshair + OHLCV readout, wheel zoom anchored on the candle under the cursor, shift-wheel / trackpad
+ * scroll, drag-pan, ←/→ pan, ↑/↓ zoom, Home / End. `update()` swaps the data (or any other prop); a resize re-fits the chart.
+ */
+export declare function candleContent(o: CandleContentOptions): PanelContent & {
+    model: CandleModel;
+    update(p: Partial<CandleContentProps>): void;
 };
 export interface GaugeContentProps {
     /** 'none' = transparent (glass); built-ins: phosphor | amber | paper */

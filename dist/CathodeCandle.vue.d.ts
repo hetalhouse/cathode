@@ -53,8 +53,8 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     magnify: boolean;
     compact: boolean;
     theme: "none" | "phosphor" | "amber" | "paper";
+    slotW: number;
     showVolume: boolean;
     volumeFraction: number;
-    slotW: number;
 }, {}, {}, {}, string, import("vue").ComponentProvideOptions, false, {}, any>;
 export default _default;
