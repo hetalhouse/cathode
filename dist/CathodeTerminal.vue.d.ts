@@ -47,8 +47,8 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {
     magnify: boolean;
     disabled: boolean;
     theme: "none" | "phosphor" | "amber" | "paper";
-    autoscroll: boolean;
     maxLines: number;
+    autoscroll: boolean;
     prompt: string;
     busy: boolean;
     historyLimit: number;
