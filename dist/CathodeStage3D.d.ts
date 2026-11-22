@@ -76,7 +76,23 @@ export interface CathodeStage3DOptions {
     }) => void;
     /** a panel's title bar was double-clicked (typically: face / fly to it — see facingPose) */
     onPanelActivate?: (id: string) => void;
+    /**
+     * A title-bar control was clicked. The stage does NOT act on it — what "minimize" / "maximize" mean is the host's call
+     * (minimize usually: stage.setPanelMinimized(id, !panel.minimized); maximize: fly the camera to fill the view, and back).
+     */
+    onPanelControl?: (id: string, control: PanelControl) => void;
+    /** a panel was resized by dragging its corner (once, on release): its new size in logical px and its new centre (the top-left corner stays put) */
+    onPanelResized?: (id: string, size: {
+        w: number;
+        h: number;
+    }, pos: {
+        x: number;
+        y: number;
+        z: number;
+    }) => void;
 }
+/** a title-bar control: the stage draws it, hit-tests it and reports clicks (onPanelControl) */
+export type PanelControl = 'minimize' | 'maximize';
 /** A camera pose in world space (what an external driver — another scene's camera — sets). */
 export interface StageCameraPose {
     position: [number, number, number];
@@ -92,6 +108,21 @@ export interface PanelOptions {
     glow?: boolean;
     /** default true; a hidden panel isn't drawn, picked or painted */
     visible?: boolean;
+    /** title-bar controls, drawn left → right at the bar's right edge (default none) */
+    controls?: PanelControl[];
+    /** start collapsed to its title bar */
+    minimized?: boolean;
+    /** a corner handle drags the panel to a new size (needs `content.resize`); default false */
+    resizable?: boolean;
+    /** resize limits in logical px (default 240x160 .. 1600x1000) */
+    minSize?: {
+        w: number;
+        h: number;
+    };
+    maxSize?: {
+        w: number;
+        h: number;
+    };
 }
 export interface PanelLayout {
     x: number;
@@ -99,6 +130,11 @@ export interface PanelLayout {
     z: number;
     rotY: number;
     visible?: boolean;
+    minimized?: boolean;
+    size?: {
+        w: number;
+        h: number;
+    };
 }
 export interface StagePick {
     panel: Panel3D;
@@ -108,6 +144,10 @@ export interface StagePick {
         x: number;
         y: number;
     } | null;
+    /** on the bar: the title-bar control under the pointer, if any */
+    control: PanelControl | null;
+    /** on the body: the pointer is over the resize handle (the bottom-right corner of a resizable panel) */
+    handle: boolean;
 }
 /** One panel: a surface mesh + a title bar, in a group the stage moves around. */
 export declare class Panel3D {
@@ -121,6 +161,22 @@ export declare class Panel3D {
     dirty: boolean;
     barDirty: boolean;
     private _title;
+    readonly controls: PanelControl[];
+    readonly resizable: boolean;
+    readonly minSize: {
+        w: number;
+        h: number;
+    };
+    readonly maxSize: {
+        w: number;
+        h: number;
+    };
+    private _grip;
+    /** the corner grip (only on a resizable panel) */
+    get grip(): THREE.Mesh | null;
+    private _minimized;
+    private _maximized;
+    private hoverControl;
     private barCanvas;
     private barTexture;
     constructor(stage: CathodeStage3D, o: PanelOptions);
@@ -128,6 +184,35 @@ export declare class Panel3D {
     get title(): string;
     /** Change the title bar's text (e.g. a live count: "Open positions (6)"). Repaints only the bar, and only if it changed. */
     setTitle(title: string): void;
+    private placeGrip;
+    /** @internal the stage brightens the grip while the pointer is over the handle */
+    setHoverGrip(on: boolean): void;
+    /**
+     * Resize to `w` x `h` logical px (clamped to minSize / maxSize): the content lays out for the new size, the surface's backing
+     * store follows, and the body / title bar / grip geometry is rebuilt. The panel's CENTRE stays where it is — the drag in the
+     * stage moves it so the top-left corner stays put. No-op (false) for a panel that is not resizable.
+     */
+    resize(w: number, h: number): boolean;
+    get minimized(): boolean;
+    get maximized(): boolean;
+    /**
+     * Collapse to the title bar (the body is hidden and no longer picked) / expand. Prefer stage.setPanelMinimized(),
+     * which also releases hover / press on the body.
+     */
+    setMinimized(v: boolean): void;
+    /** The maximize control's glyph state (a maximized panel shows "restore"). A visual flag only — what maximized MEANS is the host's. */
+    setMaximized(v: boolean): void;
+    /** @internal the stage lights the control under the pointer */
+    setHoverControl(c: PanelControl | null): void;
+    /** The box of a control in the title bar's own px (x from the bar's left, y from its top), or null if this panel has none. */
+    controlRect(c: PanelControl): {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    } | null;
+    /** The control at a point in the title bar's px, or null. */
+    controlAt(px: number, py: number): PanelControl | null;
     get visible(): boolean;
     /** Show / hide. Prefer stage.setPanelVisible(), which also releases focus / hover / drag. */
     setVisible(v: boolean): void;
@@ -140,6 +225,8 @@ export declare class Panel3D {
     /** @internal called by the stage's frame */
     paintIfDirty(): void;
     private drawBar;
+    /** the title-bar controls: strokes, not font glyphs (a glyph can fall back to a font that does not have it) */
+    private drawControls;
     dispose(): void;
 }
 export declare class CathodeStage3D {
@@ -166,6 +253,10 @@ export declare class CathodeStage3D {
     private lastCursor;
     private readonly passThrough;
     private swallowClick;
+    private pressedControl;
+    private resizing;
+    private hoverGrip;
+    private hoverBar;
     private cancelFly;
     constructor(o: CathodeStage3DOptions);
     private on;
@@ -191,6 +282,8 @@ export declare class CathodeStage3D {
     removePanel(id: string): void;
     /** Show / hide a panel. Hiding releases its focus, hover, press and drag. */
     setPanelVisible(id: string, visible: boolean): void;
+    /** Collapse a panel to its title bar / expand it. Collapsing releases hover and press on its body. */
+    setPanelMinimized(id: string, minimized: boolean): void;
     /** Keyboard focus + raise. */
     setFocus(id: string | null): void;
     private raise;
@@ -217,6 +310,16 @@ export declare class CathodeStage3D {
         x: number;
         y: number;
     } | null;
+    /** Client point of a resizable panel's resize handle (for tests / tours), or null. */
+    clientPointForHandle(id: string): {
+        x: number;
+        y: number;
+    } | null;
+    /** Client point of a title-bar control's centre (for tests / tours), or null. */
+    clientPointForControl(id: string, control: PanelControl): {
+        x: number;
+        y: number;
+    } | null;
     /** Client point of a panel's title bar centre (for tests / tours). */
     clientPointForBar(id: string): {
         x: number;
@@ -229,10 +332,15 @@ export declare class CathodeStage3D {
     private accepts;
     private onPointerDown;
     private onPointerMove;
+    /** light the control under the pointer (and clear the previous panel's) */
+    private setHoverBar;
+    private setHoverGrip;
     private onPointerUp;
     private onClick;
     private onWheel;
     private onKey;
+    private startResize;
+    private resizeTo;
     private startDrag;
     private dragTo;
     dispose(): void;

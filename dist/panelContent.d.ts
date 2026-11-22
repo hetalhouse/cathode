@@ -39,10 +39,15 @@ export interface PanelContent {
      */
     pointer?(e: PanelPointerEvent): string | null | void;
     key?(e: KeyboardEvent): void;
+    /**
+     * The panel was resized: lay out for `width` x `height` logical px and update `this.width` / `this.height`. The stage
+     * resizes the surface's backing store and repaints afterwards. A content WITHOUT this cannot be resized.
+     */
+    resize?(width: number, height: number): void;
     dispose?(): void;
 }
 /** A painter-only widget (e.g. a gauge): a surface, a size, and no input. */
-export declare function surfaceContent(surface: CathodeSurface, width: number, height: number, extra?: Partial<Pick<PanelContent, 'attach' | 'pointer' | 'key' | 'dispose'>>): PanelContent;
+export declare function surfaceContent(surface: CathodeSurface, width: number, height: number, extra?: Partial<Pick<PanelContent, 'attach' | 'pointer' | 'key' | 'resize' | 'dispose'>>): PanelContent;
 export interface GridContentOptions {
     columnDefs: ColDef[];
     rowData?: any[];
