@@ -72,7 +72,15 @@ export interface CathodeStage3DOptions {
   onPanelMoved?: (id: string, pos: { x: number; y: number; z: number }) => void
   /** a panel's title bar was double-clicked (typically: face / fly to it — see facingPose) */
   onPanelActivate?: (id: string) => void
+  /**
+   * A title-bar control was clicked. The stage does NOT act on it — what "minimize" / "maximize" mean is the host's call
+   * (minimize usually: stage.setPanelMinimized(id, !panel.minimized); maximize: fly the camera to fill the view, and back).
+   */
+  onPanelControl?: (id: string, control: PanelControl) => void
 }
+
+/** a title-bar control: the stage draws it, hit-tests it and reports clicks (onPanelControl) */
+export type PanelControl = 'minimize' | 'maximize'
 
 /** A camera pose in world space (what an external driver — another scene's camera — sets). */
 export interface StageCameraPose {
@@ -90,18 +98,26 @@ export interface PanelOptions {
   glow?: boolean
   /** default true; a hidden panel isn't drawn, picked or painted */
   visible?: boolean
+  /** title-bar controls, drawn left → right at the bar's right edge (default none) */
+  controls?: PanelControl[]
+  /** start collapsed to its title bar */
+  minimized?: boolean
 }
 
-export interface PanelLayout { x: number; y: number; z: number; rotY: number; visible?: boolean }
+export interface PanelLayout { x: number; y: number; z: number; rotY: number; visible?: boolean; minimized?: boolean }
 
 export interface StagePick {
   panel: Panel3D
   part:  'body' | 'bar'
   /** content px in the panel's logical px; null over the bezel / on the bar */
   content: { x: number; y: number } | null
+  /** on the bar: the title-bar control under the pointer, if any */
+  control: PanelControl | null
 }
 
 const BAR_PX = 26
+// title-bar controls: BTN_W x BTN_H boxes, BTN_GAP apart, BAR_PAD in from the bar's right edge
+const BTN_W = 20, BTN_H = 18, BTN_GAP = 4, BAR_PAD = 8
 
 /** One panel: a surface mesh + a title bar, in a group the stage moves around. */
 export class Panel3D {
@@ -115,12 +131,17 @@ export class Panel3D {
   barDirty = true
 
   private _title: string
+  readonly controls: PanelControl[]
+  private _minimized = false
+  private _maximized = false
+  private hoverControl: PanelControl | null = null
   private barCanvas = document.createElement('canvas')
   private barTexture: THREE.CanvasTexture
 
   constructor(readonly stage: CathodeStage3D, o: PanelOptions) {
     this.id      = o.id
     this._title  = o.title ?? o.id
+    this.controls = o.controls ?? []
     this.content = o.content
     this.glow    = o.glow ?? true
     const s = o.content.surface
@@ -141,6 +162,7 @@ export class Panel3D {
     this.bar.userData.panel  = this
 
     if (o.visible === false) this.group.visible = false
+    if (o.minimized) { this._minimized = true; this.body.visible = false }
     if (o.position) this.group.position.set(...o.position)
     this.group.rotation.y = o.rotationY ?? 0
     if (o.look) s.setLook(o.look)
@@ -157,6 +179,52 @@ export class Panel3D {
     if (title === this._title) return
     this._title = title
     this.invalidateBar()
+  }
+
+  get minimized(): boolean { return this._minimized }
+  get maximized(): boolean { return this._maximized }
+
+  /**
+   * Collapse to the title bar (the body is hidden and no longer picked) / expand. Prefer stage.setPanelMinimized(),
+   * which also releases hover / press on the body.
+   */
+  setMinimized(v: boolean) {
+    if (this._minimized === v) return
+    this._minimized = v
+    this.body.visible = !v
+    this.invalidateBar()                // the control's glyph changes
+    if (!v) this.invalidate()           // repaint what changed while it was collapsed
+  }
+
+  /** The maximize control's glyph state (a maximized panel shows "restore"). A visual flag only — what maximized MEANS is the host's. */
+  setMaximized(v: boolean) {
+    if (this._maximized === v) return
+    this._maximized = v
+    this.invalidateBar()
+  }
+
+  /** @internal the stage lights the control under the pointer */
+  setHoverControl(c: PanelControl | null) {
+    if (this.hoverControl === c) return
+    this.hoverControl = c
+    this.invalidateBar()
+  }
+
+  /** The box of a control in the title bar's own px (x from the bar's left, y from its top), or null if this panel has none. */
+  controlRect(c: PanelControl): { x: number; y: number; w: number; h: number } | null {
+    const i = this.controls.indexOf(c)
+    if (i < 0) return null
+    const n = this.controls.length
+    return { x: this.content.width - BAR_PAD - (n - i) * BTN_W - (n - 1 - i) * BTN_GAP, y: (BAR_PX - BTN_H) / 2 - 1, w: BTN_W, h: BTN_H }
+  }
+
+  /** The control at a point in the title bar's px, or null. */
+  controlAt(px: number, py: number): PanelControl | null {
+    for (const c of this.controls) {
+      const r = this.controlRect(c)!
+      if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return c
+    }
+    return null
   }
 
   get visible(): boolean { return this.group.visible }
@@ -211,8 +279,31 @@ export class Panel3D {
     ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
     ctx.textBaseline = 'middle'
     ctx.fillStyle = focused ? '#b6f5d2' : '#6fae8f'
-    ctx.fillText(this._title, 10, H / 2 - 1, W - 20)   // a long title squeezes to fit the bar instead of running off it
+    const room = this.controls.length ? W - 10 - (BAR_PAD + this.controls.length * (BTN_W + BTN_GAP)) : W - 20
+    ctx.fillText(this._title, 10, H / 2 - 1, Math.max(20, room))   // a long title squeezes to fit instead of running off the bar / under the controls
+    this.drawControls(ctx, focused)
     this.barTexture.needsUpdate = true
+  }
+
+  /** the title-bar controls: strokes, not font glyphs (a glyph can fall back to a font that does not have it) */
+  private drawControls(ctx: CanvasRenderingContext2D, focused: boolean) {
+    for (const c of this.controls) {
+      const r = this.controlRect(c)!
+      if (this.hoverControl === c) { ctx.fillStyle = 'rgba(110,231,167,0.20)'; ctx.fillRect(r.x, r.y, r.w, r.h) }
+      ctx.strokeStyle = focused ? '#b6f5d2' : '#6fae8f'
+      ctx.lineWidth = 1.4
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2
+      ctx.beginPath()
+      if (c === 'minimize') {
+        if (this._minimized) { ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy); ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5) }   // expand: +
+        else { ctx.moveTo(cx - 5, cy + 3); ctx.lineTo(cx + 5, cy + 3) }                                                       // collapse: –
+      } else if (this._maximized) {                                                                                         // restore: two squares
+        ctx.rect(cx - 5, cy - 2, 7, 6); ctx.moveTo(cx - 2, cy - 2); ctx.lineTo(cx - 2, cy - 5); ctx.lineTo(cx + 5, cy - 5); ctx.lineTo(cx + 5, cy + 1); ctx.lineTo(cx + 2, cy + 1)
+      } else {
+        ctx.rect(cx - 5, cy - 4, 10, 8)                                                                                     // maximize: □
+      }
+      ctx.stroke()
+    }
   }
 
   dispose() {
@@ -248,6 +339,8 @@ export class CathodeStage3D {
   private lastCursor = ''
   private readonly passThrough: boolean
   private swallowClick = false
+  private pressedControl: { panel: Panel3D; control: PanelControl } | null = null
+  private hoverBar: Panel3D | null = null
   private cancelFly: (() => void) | null = null
 
   constructor(private o: CathodeStage3DOptions) {
@@ -317,9 +410,12 @@ export class CathodeStage3D {
     p.group.updateWorldMatrix(true, true)
     const ppu = this.pxPerUnit
     const bodyH = p.content.height / ppu, barH = BAR_PX / ppu
-    const w = p.content.width / ppu, h = bodyH + barH
-    // the body is centred on the group origin and the bar sits above it, so the whole panel's centre is barH/2 up
-    const center = p.body.localToWorld(new THREE.Vector3(0, barH / 2, 0))
+    const w = p.content.width / ppu
+    // the body is centred on the group origin and the bar sits above it. Expanded, the panel spans the body's bottom to the
+    // bar's top; collapsed, only the bar is left.
+    const top = bodyH / 2 + barH, bottom = p.minimized ? bodyH / 2 : -bodyH / 2
+    const h = top - bottom
+    const center = p.body.localToWorld(new THREE.Vector3(0, (top + bottom) / 2, 0))
     const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(p.group.getWorldQuaternion(new THREE.Quaternion()))
     const t = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))
     const d = Math.max(h / 2 / t, w / 2 / (t * this.camera.aspect)) * (1 + (opts.margin ?? 0.12))
@@ -399,6 +495,18 @@ export class CathodeStage3D {
     this.invalidate()
   }
 
+  /** Collapse a panel to its title bar / expand it. Collapsing releases hover and press on its body. */
+  setPanelMinimized(id: string, minimized: boolean) {
+    const p = this.panels.get(id)
+    if (!p) return
+    p.setMinimized(minimized)
+    if (minimized) {
+      if (this.hovered === p) this.hovered = null
+      if (this.pressed === p) this.pressed = null
+    }
+    this.invalidate()
+  }
+
   /** Keyboard focus + raise. */
   setFocus(id: string | null) {
     if (this.focusedId === id) { if (id) this.raise(this.panels.get(id)!); return }
@@ -418,7 +526,7 @@ export class CathodeStage3D {
   getLayout(): Record<string, PanelLayout> {
     const out: Record<string, PanelLayout> = {}
     for (const [id, p] of this.panels) {
-      out[id] = { x: p.group.position.x, y: p.group.position.y, z: p.group.position.z, rotY: p.group.rotation.y, visible: p.visible }
+      out[id] = { x: p.group.position.x, y: p.group.position.y, z: p.group.position.z, rotY: p.group.rotation.y, visible: p.visible, minimized: p.minimized }
     }
     return out
   }
@@ -430,6 +538,7 @@ export class CathodeStage3D {
       p.group.position.set(l.x ?? p.group.position.x, l.y ?? p.group.position.y, l.z ?? p.group.position.z)
       if (l.rotY !== undefined) p.group.rotation.y = l.rotY
       if (l.visible !== undefined) this.setPanelVisible(id, l.visible)
+      if (l.minimized !== undefined) this.setPanelMinimized(id, l.minimized)
     }
     this.invalidate()
   }
@@ -486,7 +595,7 @@ export class CathodeStage3D {
   pick(clientX: number, clientY: number): StagePick | null {
     this.setRay(clientX, clientY)
     const meshes: THREE.Object3D[] = []
-    for (const p of this.panels.values()) if (p.visible) meshes.push(p.body, p.bar)
+    for (const p of this.panels.values()) if (p.visible) { if (!p.minimized) meshes.push(p.body); meshes.push(p.bar) }   // a collapsed panel is only its bar
     const hits = this.ray.intersectObjects(meshes, false)
     if (!hits.length) return null
     // hits are sorted nearest-first; among those within a hair of the nearest (coplanar overlap),
@@ -499,7 +608,8 @@ export class CathodeStage3D {
     const panel = best.object.userData.panel as Panel3D
     const part  = best.object === panel.bar ? 'bar' : 'body'
     const content = part === 'body' && best.uv ? panel.content.surface.contentPoint(best.uv.x, best.uv.y) : null
-    return { panel, part, content }
+    const control = part === 'bar' && best.uv ? panel.controlAt(best.uv.x * panel.content.width, (1 - best.uv.y) * BAR_PX) : null
+    return { panel, part, content, control }
   }
 
   /**
@@ -535,6 +645,20 @@ export class CathodeStage3D {
     world.project(this.camera)
     const r = this.canvas.getBoundingClientRect()
     return { x: r.left + ((world.x + 1) / 2) * r.width, y: r.top + ((1 - world.y) / 2) * r.height }
+  }
+
+  /** Client point of a title-bar control's centre (for tests / tours), or null. */
+  clientPointForControl(id: string, control: PanelControl): { x: number; y: number } | null {
+    const p = this.panels.get(id)
+    const r = p?.controlRect(control)
+    if (!p || !r) return null
+    p.group.updateWorldMatrix(true, true)
+    const ppu = this.pxPerUnit
+    const local = new THREE.Vector3((r.x + r.w / 2 - p.content.width / 2) / ppu, 0, 0)
+    local.y = (BAR_PX / 2 - (r.y + r.h / 2)) / ppu
+    const world = p.bar.localToWorld(local).project(this.camera)
+    const rect = this.canvas.getBoundingClientRect()
+    return { x: rect.left + ((world.x + 1) / 2) * rect.width, y: rect.top + ((1 - world.y) / 2) * rect.height }
   }
 
   /** Client point of a panel's title bar centre (for tests / tours). */
@@ -595,7 +719,10 @@ export class CathodeStage3D {
     if (this.controls) this.controls.enabled = false   // …and never orbits
     this.setFocus(hit.panel.id)
     this.suppressClick = false
-    if (hit.part === 'bar') {
+    if (hit.part === 'bar' && hit.control) {
+      this.pressedControl = { panel: hit.panel, control: hit.control }   // a press on a control is a button, never a drag
+      this.setCursor('pointer')
+    } else if (hit.part === 'bar') {
       this.startDrag(hit.panel)
       this.setCursor('grabbing')
     } else {
@@ -607,16 +734,26 @@ export class CathodeStage3D {
   private onPointerMove(e: PointerEvent) {
     if (this.dragging) { this.dragTo(e); return }
     if (this.pressed) { this.send(this.pressed, 'drag', e); return }
-    if (!this.accepts(e)) { this.setHover(null, e); return }
+    if (this.pressedControl) return
+    if (!this.accepts(e)) { this.setHover(null, e); this.setHoverBar(null, null); return }
     const hit = this.pick(e.clientX, e.clientY)
     this.setHover(hit && hit.part === 'body' ? hit.panel : null, e)
+    this.setHoverBar(hit && hit.part === 'bar' ? hit.panel : null, hit?.control ?? null)
     if (!hit) { this.setCursor(''); return }
-    if (hit.part === 'bar') { this.setCursor('grab'); return }
+    if (hit.part === 'bar') { this.setCursor(hit.control ? 'pointer' : 'grab'); return }
     const cursor = this.send(hit.panel, 'move', e)
     if (cursor) this.setCursor(cursor)
   }
 
+  /** light the control under the pointer (and clear the previous panel's) */
+  private setHoverBar(panel: Panel3D | null, control: PanelControl | null) {
+    if (this.hoverBar && this.hoverBar !== panel) this.hoverBar.setHoverControl(null)
+    this.hoverBar = panel
+    panel?.setHoverControl(control)
+  }
+
   private onPointerUp(e: PointerEvent) {
+    this.pressedControl = null
     if (this.dragging) {
       if (this.dragging.moved) this.suppressClick = true
       const p = this.dragging.panel
@@ -639,7 +776,10 @@ export class CathodeStage3D {
     const hit = this.pick(e.clientX, e.clientY)
     if (hit && this.passThrough) e.stopPropagation()
     if (hit && hit.part === 'body') this.send(hit.panel, 'click', e)
-    if (hit && hit.part === 'bar' && e.detail >= 2) this.o.onPanelActivate?.(hit.panel.id)
+    if (hit && hit.part === 'bar') {
+      if (hit.control) this.o.onPanelControl?.(hit.panel.id, hit.control)
+      else if (e.detail >= 2) this.o.onPanelActivate?.(hit.panel.id)
+    }
   }
 
   private onWheel(e: WheelEvent) {
