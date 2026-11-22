@@ -14,6 +14,10 @@ import { shallowReactive } from 'vue'
 import { useLogModel } from './useLogModel'
 import type { LogModel } from './useLogModel'
 import type { LogEntry } from './CanvasLog'
+import { useCandleModel } from './useCandleModel'
+import type { CandleModel } from './useCandleModel'
+import { DEFAULT_VOLUME_FRACTION } from './CanvasCandle'
+import type { OHLCVCandle, PriceOverlay, TradeMarker, CandleColors } from './CanvasCandle'
 import { drawGauge } from './CanvasGauge'
 import type { GaugeItem, GaugeColors, GaugeMark, GaugeMeter } from './CanvasGauge'
 
@@ -213,6 +217,80 @@ export function logContent(o: LogContentOptions): PanelContent & { model: LogMod
     key: (e) => model.keyDown(e),
     update(p) { Object.assign(state, p); invalidate() },
     // more room → the lines re-wrap to the new width and more of them show
+    resize(w, h) { content.width = w; content.height = h; model.setViewport(w, h); invalidate() },
+    dispose: () => { model.dispose(); surface.dispose() },
+  }
+  return content
+}
+
+export interface CandleContentProps {
+  candles:         OHLCVCandle[]
+  /** 'none' = transparent (glass); built-ins: phosphor | amber | paper */
+  theme?:          'none' | 'phosphor' | 'amber' | 'paper'
+  /** px slot width per candle at zoom 1 (default 8) */
+  slotW?:          number
+  /** show the volume pane (default true) */
+  showVolume?:     boolean
+  /** 0..1, the fraction of the pane given to volume bars */
+  volumeFraction?: number
+  /** indicator series drawn over the price pane (BB, EMA, SMA, hlines …) */
+  overlays?:       PriceOverlay[]
+  /** trade entry / exit triangles */
+  markers?:        TradeMarker[]
+  /** thumbnail mode: no time axis / interval badge, sparser price labels */
+  compact?:        boolean
+  /** per-instance palette overrides */
+  colors?:         Partial<CandleColors>
+}
+export interface CandleContentOptions extends CandleContentProps { width: number; height: number }
+
+/**
+ * A candle chart for the stage: a headless CandleModel + a world-mode surface, with the pointer, wheel and keys routed into
+ * the model — the hover crosshair + OHLCV readout, wheel zoom anchored on the candle under the cursor, shift-wheel / trackpad
+ * scroll, drag-pan, ←/→ pan, ↑/↓ zoom, Home / End. `update()` swaps the data (or any other prop); a resize re-fits the chart.
+ */
+export function candleContent(o: CandleContentOptions): PanelContent & { model: CandleModel; update(p: Partial<CandleContentProps>): void } {
+  let invalidate = () => {}
+  // shallow: a candle series can be long — only a REPLACEMENT of it (or of a prop) is a change
+  const state = shallowReactive<CandleContentProps>({
+    candles: o.candles, theme: o.theme, slotW: o.slotW, showVolume: o.showVolume, volumeFraction: o.volumeFraction,
+    overlays: o.overlays, markers: o.markers, compact: o.compact, colors: o.colors,
+  })
+  const model = useCandleModel({
+    candles:        () => state.candles,
+    theme:          () => state.theme ?? 'phosphor',
+    slotW:          () => state.slotW ?? 8,
+    showVolume:     () => state.showVolume ?? true,
+    volumeFraction: () => state.volumeFraction ?? DEFAULT_VOLUME_FRACTION,
+    overlays:       () => state.overlays,
+    markers:        () => state.markers,
+    compact:        () => state.compact ?? false,
+    colors:         () => state.colors,
+    host:           { redraw: () => invalidate() },
+  })
+  model.setViewport(o.width, o.height)
+
+  const surface = new CathodeSurface({ mode: 'world', paint: (canvas, p) => model.paint(canvas, p) })
+
+  const pointer: PanelContent['pointer'] = (e) => {
+    switch (e.kind) {
+      case 'move':  model.hoverAt(e.x, e.y); return null
+      case 'leave': model.leave(); return null
+      // the pan moves the chart with the pointer: screen px → content px
+      case 'down':  model.panStart(e.clientX * e.hitScale); return null
+      case 'drag':  model.panMove(e.clientX * e.hitScale); return null
+      case 'up':    model.panEnd(); return null
+      case 'wheel': model.wheel(e.deltaX, e.deltaY, e.shiftKey, e.x); return null
+    }
+  }
+
+  const content: PanelContent & { model: CandleModel; update(p: Partial<CandleContentProps>): void } = {
+    model, surface, width: o.width, height: o.height,
+    attach: (fn) => { invalidate = fn },
+    pointer,
+    key: (e) => model.keyDown(e),
+    update(p) { Object.assign(state, p); invalidate() },
+    // the chart fits whatever it is given: more room, more candles
     resize(w, h) { content.width = w; content.height = h; model.setViewport(w, h); invalidate() },
     dispose: () => { model.dispose(); surface.dispose() },
   }
