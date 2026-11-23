@@ -1,13 +1,13 @@
 /**
  * CathodeStage3D demo: a sortable, selectable, scrollable grid and a gauge in ONE three.js scene.
- * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion · ?log=1 adds a log panel · ?candle=1 adds a candle chart.
+ * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion · ?log=1 adds a log panel · ?candle=1 adds a candle chart · ?wall=1 adds a wall of mini charts.
  * Right-click a panel for its Display menu (in the scene).  Double-click a title bar to fly the camera to face that panel;  the – / □ buttons minimise and maximise; drag a panel's bottom-right corner to resize it.
  */
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CathodeStage3D } from '../src/CathodeStage3D'
 import type { StageControls } from '../src/CathodeStage3D'
-import { gridContent, gaugeContent, logContent, candleContent } from '../src/panelContent'
-import { candles as candleSeries, overlays as candleOverlays, markers as candleMarkers } from './candleData'
+import { gridContent, gaugeContent, logContent, candleContent, candleWallContent } from '../src/panelContent'
+import { candles as candleSeries, overlays as candleOverlays, markers as candleMarkers, wallCells } from './candleData'
 import type { LogEntry } from '../src/CanvasLog'
 
 const q = new URLSearchParams(location.search)
@@ -81,6 +81,11 @@ function appendCandles(n = 1) {
   candleSeries.splice(0, candleSeries.length, ...out); candle?.update({ candles: out })
 }
 
+// ── candle wall (candleWallContent: ?wall=1) — many mini charts in one surface: hover rings a cell, a click reports it, the wheel scrolls ──────
+const wallClicks: string[] = []
+const wall = q.get('wall') === '1'
+  ? candleWallContent({ width: 640, height: 400, cells: wallCells(12), theme: 'phosphor', onCellClick: (id) => { wallClicks.push(id) } }) : null
+
 // ── stage ───────────────────────────────────────────────────────────────────
 const controlEvents: string[] = []
 const resizeEvents: { id: string; w: number; h: number }[] = []
@@ -119,6 +124,7 @@ stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0
   actions: [{ id: '5m', label: '5m' }, { id: '15m', label: '15m' }, { id: '1H', label: '1H', active: true }, { id: '1D', label: '1D' }] })
 if (log) stage.addPanel({ id: 'log', title: 'Log', content: log, position: [-0.45, -1.1, 0.1], rotationY: 0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (candle) stage.addPanel({ id: 'candle', title: 'BTC-USD · 1h', content: candle, position: [0.35, -1.1, 0.1], rotationY: -0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
+if (wall) stage.addPanel({ id: 'wall', title: 'Charts', content: wall, position: [0.1, -1.0, 0.1], rotationY: 0.05, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (idle) setInterval(() => setTilt(Math.sin(Date.now() / 4000) * 0.9), 2500)
 
-;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, actionEvents, resizeEvents, displayEvents, log, appendLog, candle, appendCandles, candleCount: () => candleSeries.length }
+;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, actionEvents, wall, wallClicks, resizeEvents, displayEvents, log, appendLog, candle, appendCandles, candleCount: () => candleSeries.length }

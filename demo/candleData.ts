@@ -1,5 +1,6 @@
 /** A deterministic candle series with indicator overlays and trade markers — shared by the golden fixture and the stage demo. */
 import type { OHLCVCandle, PriceOverlay, TradeMarker } from '../src/CanvasCandle'
+import type { WallCell } from '../src/CanvasCandleWall'
 
 export const N = 300, STEP = 3_600_000, T0 = Date.UTC(2026, 9, 1, 0, 0, 0)
 
@@ -29,3 +30,17 @@ export const markers: TradeMarker[] = [
   { timestamp: candles[N - 12].start, price: candles[N - 12].high, kind: 'exit' },
   { timestamp: candles[N - 90].start, price: candles[N - 90].low, kind: 'entry', label: 'E' },
 ]
+
+/** `n` wall cells over slices of the series: every third one an open position (accent frame + an entry line), alternating notes / badges, a long title now and then */
+export function wallCells(n: number): WallCell[] {
+  return Array.from({ length: n }, (_, i) => {
+    const series = candles.slice(i * 7, i * 7 + 70)
+    const open = i % 3 === 0
+    return {
+      id: `P${i}`, title: i % 5 === 4 ? `Will the long question number ${i} resolve before the end of the quarter?` : `AAPL${i}`, badge: i % 2 ? 'EQ' : '₿',
+      note: `${i % 2 ? '-' : '+'}${(i * 0.37 + 0.2).toFixed(2)}%`, noteColor: i % 2 ? '#e74c3c' : '#00bc8c', open,
+      candles: series,
+      overlays: open ? [{ kind: 'hline' as const, price: series[20].close, color: '#5b8ff9', dashed: false, label: 'entry' }] : [],
+    }
+  })
+}

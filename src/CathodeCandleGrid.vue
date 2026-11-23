@@ -14,12 +14,11 @@
  * to a cell index → `cell-click`. Bend-field applies: bending the wall widens
  * the content canvas, so MORE CELLS slide into view (distortion pays for data).
  */
-import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import * as THREE from 'three'
-import {
-  drawCandle, CANDLE_THEME_COLORS,
-  type OHLCVCandle, type PriceOverlay, type CandleColors,
-} from './CanvasCandle'
+import type { CandleColors } from './CanvasCandle'
+import { layoutWall, wallCellAt, wallMaxScroll, drawWall } from './CanvasCandleWall'
+import type { WallCell, WallCellCache } from './CanvasCandleWall'
 import { screenToCanvas } from './CanvasGrid'
 import {
   LENS_FRAG_UNIFORMS, LENS_FRAG_FN, LENS_FRAG_RING,
@@ -28,19 +27,7 @@ import {
 } from './lensShader'
 import './cathode.css'
 
-export interface WallCell {
-  id:       string
-  title:    string
-  /** tiny badge after the title (e.g. 'EQ', '₿', '🅟') */
-  badge?:   string
-  /** right-aligned note (e.g. '+2.4%'), in `noteColor` */
-  note?:    string
-  noteColor?: string
-  /** open-position state: accent frame + dot */
-  open?:    boolean
-  candles:  OHLCVCandle[]
-  overlays?: PriceOverlay[]
-}
+export type { WallCell }
 
 const props = withDefaults(defineProps<{
   cells:          WallCell[]
@@ -81,9 +68,6 @@ const canvasEl = ref<HTMLCanvasElement | null>(null)
 const hoveredCell = ref(-1)
 const scrollY  = ref(0)
 const mouseLensUV: MouseLensUV = { ...LENS_INACTIVE }
-
-const HEADER_H = 22
-const PAD      = 6
 
 // ── Three.js (one context for the whole wall) ────────────────────────────────
 // Device-pixel ratio (capped at 2 — beyond that the memory cost outweighs the gain). Re-read on
@@ -226,139 +210,23 @@ function sizeToContainer() {
   redraw()
 }
 
-// ── Layout ───────────────────────────────────────────────────────────────────
-interface CellRect { x: number; y: number; w: number; h: number }
-function layout(): { rects: CellRect[]; rowH: number; totalH: number; cols: number } {
-  const W = offCanvas?.width || 0
-  const cols = Math.max(1, Math.floor(W / props.minCellW))
-  const cellW = Math.floor(W / cols)
-  const chartH = Math.round(cellW * props.cellAspect)
-  const rowH = HEADER_H + chartH + PAD
-  const rects = props.cells.map((_, i) => ({
-    x: (i % cols) * cellW,
-    y: Math.floor(i / cols) * rowH - scrollY.value,
-    w: cellW,
-    h: rowH,
-  }))
-  return { rects, rowH, totalH: Math.ceil(props.cells.length / cols) * rowH, cols }
+// ── Layout (the pure maths is CanvasCandleWall; the component only feeds it the canvas size) ──
+function layout() {
+  return layoutWall({ count: props.cells.length, width: (offCanvas?.width || 0) / dpr, minCellW: props.minCellW, cellAspect: props.cellAspect, scrollY: scrollY.value })
 }
-const maxScrollY = () => {
-  const { totalH } = layout()
-  return Math.max(0, totalH - (offCanvas?.height || 0))
-}
+const maxScrollY = () => wallMaxScroll(layout().totalH, (offCanvas?.height || 0) / dpr)
 
-// ── Per-cell 2D offscreens (plain canvases — NOT WebGL; the cap only counts contexts) ──
-const cellCanvases = new Map<string, { canvas: HTMLCanvasElement; key: string }>()
-function cellCanvas(cell: WallCell, w: number, h: number): HTMLCanvasElement {
-  const last = cell.candles[cell.candles.length - 1]
-  const key = `${w}x${h}@${dpr}|${cell.candles.length}|${last ? last.start + ':' + last.close : 0}|${props.theme}|${props.glow}|${props.showVolume}|${props.slotW}`
-  const hit = cellCanvases.get(cell.id)
-  if (hit && hit.key === key) return hit.canvas
-  const canvas = hit?.canvas ?? document.createElement('canvas')
-  // Physical backing store = logical × dpr; drawCandle(dpr) draws in logical coords at retina res.
-  canvas.width = Math.round(w * dpr)
-  canvas.height = Math.round(h * dpr)
-  // Fit the whole series into the cell: shrink slotW until it fits, then right-align.
-  const fitSlotW = Math.max(1.5, Math.min(props.slotW, w / Math.max(1, cell.candles.length)))
-  // Narrow cells: keep overlay LINES but drop their label pills — at mini sizes the
-  // pills stack over the price axis and each other (the predmkt-wall clutter).
-  const overlays = w < 260 && cell.overlays
-    ? cell.overlays.map((o: any) => ({ ...o, label: '' })) // '' suppresses the pill; undefined falls back to the price tag
-    : cell.overlays
-  drawCandle(canvas, {
-    candles: cell.candles,
-    slotW: fitSlotW,
-    scrollX: Math.max(0, cell.candles.length * fitSlotW - w),
-    theme: props.theme,
-    glow: props.glow,
-    showVolume: props.showVolume,
-    volumeFraction: props.volumeFraction,
-    hover: null,
-    overlays,
-    compact: true,
-    colors: props.colors,
-    dpr,
-  })
-  cellCanvases.set(cell.id, { canvas, key })
-  return canvas
-}
+// Per-cell 2D offscreens (plain canvases — NOT WebGL; the cap only counts contexts)
+const cellCache: WallCellCache = new Map()
 
 // ── Composite + warp ─────────────────────────────────────────────────────────
-const themeC = computed(() => ({ ...(CANDLE_THEME_COLORS[props.theme] ?? CANDLE_THEME_COLORS['none']), ...(props.colors ?? {}) }) as CandleColors)
 
 function redraw() {
   if (!offCanvas?.width) return
-  const ctx = offCanvas.getContext('2d')
-  if (!ctx) return
-  const c = themeC.value
-  ctx.setTransform(1, 0, 0, 1, 0, 0) // clear/fill in physical px…
-  ctx.clearRect(0, 0, offCanvas.width, offCanvas.height)
-  if (c.bg && c.bg !== 'rgba(0,0,0,0)') { ctx.fillStyle = c.bg; ctx.fillRect(0, 0, offCanvas.width, offCanvas.height) }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0) // …then draw the wall in LOGICAL coords at physical resolution
-
-  const { rects } = layout()
-  ctx.font = '600 11px ui-monospace, SFMono-Regular, monospace'
-  ctx.textBaseline = 'middle'
-  for (let i = 0; i < props.cells.length; i++) {
-    const cell = props.cells[i]
-    const r = rects[i]
-    if (r.y + r.h < 0 || r.y > offCanvas.height / dpr) continue // off-screen row (rects are logical)
-    const inX = r.x + PAD / 2, inW = r.w - PAD
-    // frame — accent when open, hover ring on top
-    ctx.strokeStyle = cell.open ? c.candleBull : c.gridline
-    ctx.lineWidth = i === hoveredCell.value ? 2 : 1
-    ctx.strokeRect(inX + 0.5, r.y + 0.5, inW - 1, r.h - PAD - 1)
-    // header — clipped to the cell; the title ellipsizes into the space the
-    // badge + note leave (predmkt questions are sentences, not tickers).
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(inX, r.y, inW, HEADER_H)
-    ctx.clip()
-    const ty = r.y + HEADER_H / 2 + 1
-    const noteW = cell.note ? ctx.measureText(cell.note).width + (cell.open ? 22 : 12) : (cell.open ? 16 : 0)
-    const badgeW = cell.badge ? ctx.measureText(cell.badge).width + 6 : 0
-    const titleMax = inW - 14 - badgeW - noteW
-    let title = cell.title
-    if (ctx.measureText(title).width > titleMax) {
-      while (title.length > 1 && ctx.measureText(title + '…').width > titleMax) title = title.slice(0, -1)
-      title += '…'
-    }
-    let tx = inX + 7
-    ctx.fillStyle = c.text
-    ctx.textAlign = 'left'
-    ctx.fillText(title, tx, ty)
-    tx += ctx.measureText(title).width + 6
-    if (cell.badge) {
-      ctx.fillStyle = c.accent
-      ctx.fillText(cell.badge, tx, ty)
-    }
-    if (cell.note) {
-      ctx.textAlign = 'right'
-      ctx.fillStyle = cell.noteColor || c.accent
-      ctx.fillText(cell.note, inX + inW - (cell.open ? 16 : 7), ty)
-      ctx.textAlign = 'left'
-    }
-    ctx.restore()
-    if (cell.open) {
-      ctx.fillStyle = c.candleBull
-      ctx.beginPath()
-      ctx.arc(inX + inW - 9, r.y + HEADER_H / 2 + 1, 3, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    // chart (or a loading placeholder)
-    const chartY = r.y + HEADER_H
-    const chartH = r.h - HEADER_H - PAD
-    if (cell.candles.length) {
-      // cell offscreen is dpr-scaled (physical (inW-2)·dpr × …); draw it at LOGICAL dest size so it
-      // lands 1:1 with the composite's dpr scale — crisp, no re-blur.
-      ctx.drawImage(cellCanvas(cell, inW - 2, chartH - 1), inX + 1, chartY, inW - 2, chartH - 1)
-    } else {
-      ctx.fillStyle = c.accent
-      ctx.textAlign = 'center'
-      ctx.fillText('· · ·', inX + inW / 2, chartY + chartH / 2)
-      ctx.textAlign = 'left'
-    }
-  }
+  drawWall(offCanvas, {
+    cells: props.cells, theme: props.theme, glow: props.glow, showVolume: props.showVolume, volumeFraction: props.volumeFraction, slotW: props.slotW,
+    colors: props.colors, hoveredCell: hoveredCell.value, scrollY: scrollY.value, minCellW: props.minCellW, cellAspect: props.cellAspect, dpr,
+  }, cellCache)
 
   if (webglFailed) {
     const ctx2d = canvasEl.value?.getContext('2d')
@@ -386,11 +254,7 @@ function canvasCoords(e: MouseEvent): [number, number] {
     (offCanvas?.width || rect.width) / dpr, (offCanvas?.height || rect.height) / dpr,
   )
 }
-function cellAt(cx: number, cy: number): number {
-  if (cx < 0) return -1
-  const { rects } = layout()
-  return rects.findIndex((r) => cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h)
-}
+function cellAt(cx: number, cy: number): number { return wallCellAt(layout().rects, cx, cy) }
 function onClick(e: MouseEvent) {
   const [cx, cy] = canvasCoords(e)
   const i = cellAt(cx, cy)
@@ -432,7 +296,7 @@ onMounted(() => {
 onUnmounted(() => {
   ro?.disconnect()
   releaseRenderer()
-  cellCanvases.clear()
+  cellCache.clear()
 })
 watch(() => [props.curvature, props.bendField], () => nextTick(sizeToContainer))
 watch(() => [props.cells, props.theme, props.glow, props.scanlines, props.showVolume, props.magnify], () => {
