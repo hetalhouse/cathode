@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.19.0 — 2026-11-23
+
+**A wall of mini candle charts as a stage panel.** The dashboard's Charts window is a wall of small candle cards; `candleWallContent()` puts the same wall on a
+`CathodeStage3D` panel. All additive: `CathodeCandleGrid`'s output is unchanged (pinned byte-identical by a golden spec generated before the lift).
+
+- **`candleWallContent({ width, height, cells, theme?, minCellW?, cellAspect?, onCellClick? })`** — hover rings a cell, a click reports its id, the wheel scrolls a
+  wall that overflows, a resize re-flows the columns (`floor(width / minCellW)`, default 210 px). `content.update({ cells, theme, … })` swaps the data.
+- **`useCandleWallModel`** — the headless half (viewport, scroll, hovered cell, hit-testing, paint), and the pure wall maths shared with `CathodeCandleGrid`:
+  **`layoutWall` / `wallCellAt` / `wallMaxScroll` / `drawWall`** (`src/CanvasCandleWall.ts`).
+- **Fix:** `CathodeCandleGrid` laid out on the canvas's *physical* width, so a high-dpi screen got twice the columns of a twice-as-wide canvas; it now lays out in
+  logical px (identical at dpr 1).
+
+New exports: `candleWallContent`, `useCandleWallModel`, `layoutWall`, `wallCellAt`, `wallMaxScroll`, `drawWall`; types `CandleWallContentProps`,
+`CandleWallContentOptions`, `WallModel`, `WallModelOptions`, `WallHost`, `WallPaintOpts`. `WallCell` is still exported from the same place.
+
 ## 0.18.0 — 2026-11-23
 
 **Title-bar actions and a close control.** A `CathodeStage3D` panel can now be dismissed and can carry a picker in its title bar — what an on-demand
