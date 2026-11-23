@@ -32,6 +32,8 @@
 import * as THREE from 'three';
 import type { SurfaceLook } from './CathodeSurface';
 import type { PanelContent } from './panelContent';
+import type { PanelDisplay, MenuRow, MenuColors } from './stageMenu';
+export type { PanelDisplay, MenuColors, MenuRow };
 export interface StageControls {
     enabled: boolean;
     /** OrbitControls' pivot — kept in step with the camera when the host / flyTo moves it */
@@ -81,6 +83,15 @@ export interface CathodeStage3DOptions {
      * (minimize usually: stage.setPanelMinimized(id, !panel.minimized); maximize: fly the camera to fill the view, and back).
      */
     onPanelControl?: (id: string, control: PanelControl) => void;
+    /**
+     * A right-click on a panel opens a "Display" menu drawn IN the scene — Scan lines · Glow · Magnify (hover lens) · a Bend stepper — and Cmd+Shift +/- bends
+     * the hovered panel. `true` or `{ colors }` (the menu's palette). The stage applies each change to the panel at once; `onPanelDisplay` lets the host persist it.
+     */
+    displayMenu?: boolean | {
+        colors?: Partial<MenuColors>;
+    };
+    /** a panel's display (bend / scan lines / glow / magnify) was changed through the menu or the bend shortcut: the full new state */
+    onPanelDisplay?: (id: string, display: PanelDisplay) => void;
     /** a panel was resized by dragging its corner (once, on release): its new size in logical px and its new centre (the top-left corner stays put) */
     onPanelResized?: (id: string, size: {
         w: number;
@@ -148,6 +159,11 @@ export interface StagePick {
     control: PanelControl | null;
     /** on the body: the pointer is over the resize handle (the bottom-right corner of a resizable panel) */
     handle: boolean;
+    /** the raycast hit's UV on the plane (0..1, y up) */
+    uv: {
+        x: number;
+        y: number;
+    } | null;
 }
 /** One panel: a surface mesh + a title bar, in a group the stage moves around. */
 export declare class Panel3D {
@@ -158,6 +174,7 @@ export declare class Panel3D {
     readonly body: THREE.Mesh;
     readonly bar: THREE.Mesh;
     glow: boolean;
+    private _display;
     dirty: boolean;
     barDirty: boolean;
     private _title;
@@ -220,6 +237,10 @@ export declare class Panel3D {
     invalidate(): void;
     invalidateBar(): void;
     setLook(look: Partial<SurfaceLook>): void;
+    /** the panel's display switches: bend, scan lines, glow, the hover magnifier */
+    get display(): PanelDisplay;
+    /** change any of the display switches (what the Display menu does); a turned-off magnifier lets go of the lens */
+    setDisplay(d: Partial<PanelDisplay>): void;
     setPosition(x: number, y: number, z: number): void;
     setRotationY(r: number): void;
     /** @internal called by the stage's frame */
@@ -248,6 +269,9 @@ export declare class CathodeStage3D {
     private pressed;
     private dragging;
     private suppressClick;
+    /** the in-scene Display menu (when the `displayMenu` option is on) and the panel whose hover lens is following the pointer */
+    private menu;
+    private lensPanel;
     private resizeObserver;
     private disposers;
     private lastCursor;
@@ -339,6 +363,25 @@ export declare class CathodeStage3D {
     private onClick;
     private onWheel;
     private onKey;
+    /** right-click: open the menu on the panel under the pointer (the body or the title bar); anywhere else, close it and leave the click to the page */
+    private onContextMenu;
+    /** open the menu on a panel programmatically (tests / tours); (x, y) is the menu's top-left in the body's px */
+    openDisplayMenu(id: string, x?: number, y?: number): void;
+    closeDisplayMenu(): void;
+    /** the panel the Display menu is open on, or null */
+    get displayMenuPanel(): Panel3D | null;
+    /** the menu row under a client point (the menu is a quad on its panel's plane — a plain ray hit), or null */
+    private pickMenu;
+    /** the client point of a menu row's centre (for tests / tours), or null when the menu is closed */
+    clientPointForMenuRow(row: MenuRow): {
+        x: number;
+        y: number;
+    } | null;
+    private menuAct;
+    private stepBend;
+    private applyDisplay;
+    /** the hover magnifier: follow the pointer over a panel whose `magnify` is on; let go everywhere else */
+    private setLens;
     private startResize;
     private resizeTo;
     private startDrag;

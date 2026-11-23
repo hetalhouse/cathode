@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.17.0 — 2026-11-23
+
+**The Display menu, drawn in the scene — and the hover magnifier on stage panels.** A right-click on a `CathodeStage3D` panel opens the CRT
+"Display" menu as a small canvas-textured quad on THAT panel's own plane, a hair in front of it, so it tilts, bends and orbits with the panel
+instead of floating over the page as DOM. All additive: nothing changes unless `displayMenu` is set.
+
+- **`displayMenu: true | { colors }`** on the stage. Rows: **Scan lines · Glow · Magnify (hover lens)** and a **Bend** stepper (−40 … 40, step 2).
+  Each change applies to the panel at once and is reported as `onPanelDisplay(id, { curvature, scanlines, glow, magnify })` so a host can persist
+  it. **Cmd+Shift +/−** bends the hovered panel the same way (and reports it).
+- A press on the menu never reaches the content beneath it; a press elsewhere, Escape, or starting a drag / resize closes it; it clamps to stay
+  inside its panel; a right-click over a panel is consumed (the page's own context menu is not shown), on empty space it passes through.
+- **Magnify now works on a stage panel.** The stage feeds the hit UV to the surface's lens, so with it on the hover lens follows the pointer over
+  that panel and lets go when the pointer leaves or the switch goes off. (The lens keeps its fixed pixel radius — best on panels big enough to carry it.)
+- **`panel.display` / `panel.setDisplay({ … })`** are the same switches in code (`panel.setLook` keeps them in sync);
+  **`stage.openDisplayMenu(id)` / `closeDisplayMenu()` / `displayMenuPanel` / `clientPointForMenuRow(row)`** for tours and tests.
+  `StagePick` gains `uv` (the raycast hit's UV on the plane).
+
+New exports: types `PanelDisplay`, `MenuColors`, `MenuRow`. New options: `CathodeStage3DOptions.displayMenu` / `onPanelDisplay`.
+New members: `Panel3D.display` / `setDisplay`, `CathodeStage3D.openDisplayMenu` / `closeDisplayMenu` / `displayMenuPanel` / `clientPointForMenuRow`.
+Type-level note: `StagePick` gains a **required** field (`uv`) — only relevant if you construct a `StagePick` yourself; the stage hands them to you.
+
 ## 0.16.0 — 2026-11-22
 
 **Log and Candle as stage panels.** `CathodeStage3D` could host a grid and a gauge; it can now host a log and a candle chart too.
