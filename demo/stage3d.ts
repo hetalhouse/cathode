@@ -1,7 +1,7 @@
 /**
  * CathodeStage3D demo: a sortable, selectable, scrollable grid and a gauge in ONE three.js scene.
  * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion · ?log=1 adds a log panel · ?candle=1 adds a candle chart.
- * Double-click a title bar to fly the camera to face that panel;  the – / □ buttons minimise and maximise; drag a panel's bottom-right corner to resize it.
+ * Right-click a panel for its Display menu (in the scene).  Double-click a title bar to fly the camera to face that panel;  the – / □ buttons minimise and maximise; drag a panel's bottom-right corner to resize it.
  */
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CathodeStage3D } from '../src/CathodeStage3D'
@@ -84,6 +84,7 @@ function appendCandles(n = 1) {
 // ── stage ───────────────────────────────────────────────────────────────────
 const controlEvents: string[] = []
 const resizeEvents: { id: string; w: number; h: number }[] = []
+const displayEvents: ({ id: string } & Record<string, unknown>)[] = []
 const before = new Map<string, ReturnType<CathodeStage3D['getCameraPose']>>()
 const stage = new CathodeStage3D({
   container: document.getElementById('stage')!,
@@ -91,6 +92,9 @@ const stage = new CathodeStage3D({
   cameraPosition: [0, 0.15, 3.3],
   // double-click a title bar → fly the camera to face that panel
   onPanelActivate: (id) => { const pose = stage.facingPose(id); if (pose) void stage.flyTo(pose) },
+  // right-click a panel: the Display menu, drawn in the scene (scan lines / glow / magnify / bend); Cmd+Shift +/- bends the hovered panel
+  displayMenu: true,
+  onPanelDisplay: (id, d) => { displayEvents.push({ id, ...d }) },
   // a panel was resized by its corner handle (once, on release)
   onPanelResized: (id, size) => { resizeEvents.push({ id, w: size.w, h: size.h }) },
   // the title-bar controls: the stage reports the click, the demo decides what it means
@@ -113,4 +117,4 @@ if (log) stage.addPanel({ id: 'log', title: 'Log', content: log, position: [-0.4
 if (candle) stage.addPanel({ id: 'candle', title: 'BTC-USD · 1h', content: candle, position: [0.35, -1.1, 0.1], rotationY: -0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (idle) setInterval(() => setTilt(Math.sin(Date.now() / 4000) * 0.9), 2500)
 
-;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, resizeEvents, log, appendLog, candle, appendCandles, candleCount: () => candleSeries.length }
+;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, resizeEvents, displayEvents, log, appendLog, candle, appendCandles, candleCount: () => candleSeries.length }
