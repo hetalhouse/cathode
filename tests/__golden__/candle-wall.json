@@ -1,0 +1,56 @@
+{
+  "bend": {
+    "steps": {
+      "initial": "bb286bbdd3d0",
+      "hover a cell": "c7e171b63a80",
+      "hover another": "b06a58291c1b",
+      "wheel down": "2686d7a50886",
+      "wheel down more": "b29398ad3a03",
+      "hover after scroll": "cfd17ed31e85",
+      "click a cell": "cfd17ed31e85",
+      "wheel to the top": "3dcc24e2ded0",
+      "pointer leaves": "05bbad3fb24b"
+    },
+    "clicks": [
+      "P7",
+      "P0",
+      "P2"
+    ]
+  },
+  "concave": {
+    "steps": {
+      "initial": "de94b1173d0c",
+      "hover a cell": "71f692a02dea",
+      "hover another": "e6cf20afb24d",
+      "wheel down": "037369d3de56",
+      "wheel down more": "2eb70c698484",
+      "hover after scroll": "192cb6073a66",
+      "click a cell": "192cb6073a66",
+      "wheel to the top": "7d6beca5179b",
+      "pointer leaves": "0d85b733ac4c"
+    },
+    "clicks": [
+      "P7",
+      "P0",
+      "P2"
+    ]
+  },
+  "flat": {
+    "steps": {
+      "initial": "b1fdab12ff71",
+      "hover a cell": "5c5aee636caa",
+      "hover another": "b1fdab12ff71",
+      "wheel down": "fd29eca6c168",
+      "wheel down more": "c5b75004885f",
+      "hover after scroll": "c5b75004885f",
+      "click a cell": "c5b75004885f",
+      "wheel to the top": "b1fdab12ff71",
+      "pointer leaves": "b1fdab12ff71"
+    },
+    "clicks": [
+      "P7",
+      "P0",
+      "P2"
+    ]
+  }
+}

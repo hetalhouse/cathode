@@ -16,6 +16,9 @@ import type { LogModel } from './useLogModel'
 import type { LogEntry } from './CanvasLog'
 import { useCandleModel } from './useCandleModel'
 import type { CandleModel } from './useCandleModel'
+import { useCandleWallModel } from './useCandleWallModel'
+import type { WallModel } from './useCandleWallModel'
+import type { WallCell } from './CanvasCandleWall'
 import { DEFAULT_VOLUME_FRACTION } from './CanvasCandle'
 import type { OHLCVCandle, PriceOverlay, TradeMarker, CandleColors } from './CanvasCandle'
 import { drawGauge } from './CanvasGauge'
@@ -291,6 +294,71 @@ export function candleContent(o: CandleContentOptions): PanelContent & { model: 
     key: (e) => model.keyDown(e),
     update(p) { Object.assign(state, p); invalidate() },
     // the chart fits whatever it is given: more room, more candles
+    resize(w, h) { content.width = w; content.height = h; model.setViewport(w, h); invalidate() },
+    dispose: () => { model.dispose(); surface.dispose() },
+  }
+  return content
+}
+
+export interface CandleWallContentProps {
+  cells:           WallCell[]
+  theme?:          'none' | 'phosphor' | 'amber' | 'paper'
+  showVolume?:     boolean
+  volumeFraction?: number
+  /** candle slot width (the series is shrunk to fit its cell) */
+  slotW?:          number
+  /** minimum cell width in px: columns = floor(width / minCellW) (default 210) */
+  minCellW?:       number
+  /** chart height as a fraction of cell width (default 0.6) */
+  cellAspect?:     number
+  colors?:         Partial<CandleColors>
+}
+export interface CandleWallContentOptions extends CandleWallContentProps {
+  width: number; height: number
+  /** a cell was pressed (its id) */
+  onCellClick?: (id: string) => void
+}
+
+/**
+ * A WALL of mini candle charts for the stage: a headless WallModel + a world-mode surface, with the pointer routed into it — hover rings a cell, a click reports its
+ * id (`onCellClick`), the wheel scrolls the wall when it overflows. `update()` swaps the cells (or any other prop); a resize re-flows the columns.
+ */
+export function candleWallContent(o: CandleWallContentOptions): PanelContent & { model: WallModel; update(p: Partial<CandleWallContentProps>): void } {
+  let invalidate = () => {}
+  const state = shallowReactive<CandleWallContentProps>({
+    cells: o.cells, theme: o.theme, showVolume: o.showVolume, volumeFraction: o.volumeFraction, slotW: o.slotW, minCellW: o.minCellW, cellAspect: o.cellAspect, colors: o.colors,
+  })
+  const model = useCandleWallModel({
+    cells:          () => state.cells,
+    theme:          () => state.theme ?? 'phosphor',
+    showVolume:     () => state.showVolume ?? true,
+    volumeFraction: () => state.volumeFraction ?? 0.22,
+    slotW:          () => state.slotW ?? 3,
+    colors:         () => state.colors,
+    minCellW:       () => state.minCellW ?? 210,
+    cellAspect:     () => state.cellAspect ?? 0.6,
+    host:           { redraw: () => invalidate() },
+  })
+  model.setViewport(o.width, o.height)
+
+  const surface = new CathodeSurface({ mode: 'world', paint: (canvas, p) => model.paint(canvas, p) })
+
+  const pointer: PanelContent['pointer'] = (e) => {
+    switch (e.kind) {
+      case 'move':  { const i = model.hover(e.x, e.y); return i >= 0 ? 'pointer' : null }
+      case 'leave': model.leave(); return null
+      case 'click': { const id = model.cellIdAt(e.x, e.y); if (id) o.onCellClick?.(id); return null }
+      case 'wheel': model.wheel(e.deltaY); return null
+      default: return null
+    }
+  }
+
+  const content: PanelContent & { model: WallModel; update(p: Partial<CandleWallContentProps>): void } = {
+    model, surface, width: o.width, height: o.height,
+    attach: (fn) => { invalidate = fn },
+    pointer,
+    update(p) { Object.assign(state, p); invalidate() },
+    // more room, more columns
     resize(w, h) { content.width = w; content.height = h; model.setViewport(w, h); invalidate() },
     dispose: () => { model.dispose(); surface.dispose() },
   }
