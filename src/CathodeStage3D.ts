@@ -32,6 +32,9 @@
 import * as THREE from 'three'
 import type { SurfaceLook } from './CathodeSurface'
 import type { PanelContent, PanelPointerEvent, PanelPointerKind } from './panelContent'
+import { DisplayMenu3D, CURVE_MIN, CURVE_MAX, CURVE_STEP } from './stageMenu'
+import type { PanelDisplay, MenuRow, MenuColors } from './stageMenu'
+export type { PanelDisplay, MenuColors, MenuRow }
 
 export interface StageControls {
   enabled: boolean
@@ -77,6 +80,13 @@ export interface CathodeStage3DOptions {
    * (minimize usually: stage.setPanelMinimized(id, !panel.minimized); maximize: fly the camera to fill the view, and back).
    */
   onPanelControl?: (id: string, control: PanelControl) => void
+  /**
+   * A right-click on a panel opens a "Display" menu drawn IN the scene — Scan lines · Glow · Magnify (hover lens) · a Bend stepper — and Cmd+Shift +/- bends
+   * the hovered panel. `true` or `{ colors }` (the menu's palette). The stage applies each change to the panel at once; `onPanelDisplay` lets the host persist it.
+   */
+  displayMenu?: boolean | { colors?: Partial<MenuColors> }
+  /** a panel's display (bend / scan lines / glow / magnify) was changed through the menu or the bend shortcut: the full new state */
+  onPanelDisplay?: (id: string, display: PanelDisplay) => void
   /** a panel was resized by dragging its corner (once, on release): its new size in logical px and its new centre (the top-left corner stays put) */
   onPanelResized?: (id: string, size: { w: number; h: number }, pos: { x: number; y: number; z: number }) => void
 }
@@ -122,6 +132,8 @@ export interface StagePick {
   control: PanelControl | null
   /** on the body: the pointer is over the resize handle (the bottom-right corner of a resizable panel) */
   handle: boolean
+  /** the raycast hit's UV on the plane (0..1, y up) */
+  uv: { x: number; y: number } | null
 }
 
 const BAR_PX = 26
@@ -139,6 +151,7 @@ export class Panel3D {
   readonly body: THREE.Mesh
   readonly bar: THREE.Mesh
   glow: boolean
+  private _display: PanelDisplay = { curvature: 0, scanlines: true, glow: true, magnify: false }
   dirty = true
   barDirty = true
 
@@ -201,6 +214,7 @@ export class Panel3D {
     if (o.position) this.group.position.set(...o.position)
     this.group.rotation.y = o.rotationY ?? 0
     if (o.look) s.setLook(o.look)
+    this._display = { curvature: o.look?.curvature ?? 0, scanlines: o.look?.scanlines ?? true, glow: this.glow, magnify: o.look?.magnify ?? false }
 
     s.resize(o.content.width, o.content.height, window.devicePixelRatio || 1)
     o.content.attach?.(() => this.invalidate())
@@ -313,7 +327,27 @@ export class Panel3D {
   invalidate() { this.dirty = true; this.stage.invalidate() }
   invalidateBar() { this.barDirty = true; this.stage.invalidate() }
 
-  setLook(look: Partial<SurfaceLook>) { this.content.surface.setLook(look); this.invalidate() }
+  setLook(look: Partial<SurfaceLook>) {
+    this.content.surface.setLook(look)
+    const d = this._display
+    if (look.curvature !== undefined) d.curvature = look.curvature
+    if (look.scanlines !== undefined) d.scanlines = look.scanlines
+    if (look.magnify !== undefined) d.magnify = look.magnify
+    this.invalidate()
+  }
+
+  /** the panel's display switches: bend, scan lines, glow, the hover magnifier */
+  get display(): PanelDisplay { return { ...this._display } }
+
+  /** change any of the display switches (what the Display menu does); a turned-off magnifier lets go of the lens */
+  setDisplay(d: Partial<PanelDisplay>) {
+    this._display = { ...this._display, ...d }
+    const n = this._display
+    this.content.surface.setLook({ curvature: n.curvature, scanlines: n.scanlines, magnify: n.magnify })
+    this.glow = n.glow
+    if (!n.magnify) this.content.surface.setLens(null)
+    this.invalidate()
+  }
   setPosition(x: number, y: number, z: number) { this.group.position.set(x, y, z); this.stage.invalidate() }
   setRotationY(r: number) { this.group.rotation.y = r; this.stage.invalidate() }
 
@@ -407,6 +441,9 @@ export class CathodeStage3D {
   private pressed: Panel3D | null = null            // a content press in progress
   private dragging: { panel: Panel3D; plane: THREE.Plane; offset: THREE.Vector3; moved: boolean } | null = null
   private suppressClick = false
+  /** the in-scene Display menu (when the `displayMenu` option is on) and the panel whose hover lens is following the pointer */
+  private menu: DisplayMenu3D | null = null
+  private lensPanel: Panel3D | null = null
   private resizeObserver: ResizeObserver
   private disposers: (() => void)[] = []
   private lastCursor = ''
@@ -452,6 +489,11 @@ export class CathodeStage3D {
     this.on(it, 'click', (e) => this.onClick(e as MouseEvent), { capture: this.passThrough })
     this.on(it, 'wheel', (e) => this.onWheel(e as WheelEvent), { capture: true, passive: false })
     this.on(this.passThrough ? window : this.canvas, 'keydown', (e) => this.onKey(e as KeyboardEvent))
+
+    if (o.displayMenu) {
+      this.menu = new DisplayMenu3D(this.pxPerUnit, typeof o.displayMenu === 'object' ? o.displayMenu.colors : {})
+      this.on(it, 'contextmenu', (e) => this.onContextMenu(e as MouseEvent), { capture: true })
+    }
 
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(o.container)
@@ -550,6 +592,8 @@ export class CathodeStage3D {
     if (this.focusedId === id) this.setFocus(null)
     if (this.hovered === p) this.hovered = null
     if (this.pressed === p) this.pressed = null
+    if (this.lensPanel === p) this.lensPanel = null
+    if (this.menu?.panel === p) this.menu.close()
     this.scene.remove(p.group)
     p.dispose()
     this.panels.delete(id)
@@ -688,7 +732,7 @@ export class CathodeStage3D {
     const control = part === 'bar' && best.uv ? panel.controlAt(best.uv.x * panel.content.width, (1 - best.uv.y) * BAR_PX) : null
     const handle = part === 'body' && panel.resizable && !panel.minimized && !!best.uv
       && best.uv.x * panel.content.width > panel.content.width - HANDLE_PX && (1 - best.uv.y) * panel.content.height > panel.content.height - HANDLE_PX
-    return { panel, part, content, control, handle }
+    return { panel, part, content, control, handle, uv: best.uv ? { x: best.uv.x, y: best.uv.y } : null }
   }
 
   /**
@@ -788,7 +832,7 @@ export class CathodeStage3D {
       this.send(this.hovered, 'leave', e ?? { clientX: -1, clientY: -1 })
     }
     this.hovered = p
-    if (!p) this.setCursor('')
+    if (!p) { this.setCursor(''); this.setLens(null) }
   }
 
   /** passThrough: did this event land on something the stage may take (not DOM stacked above it)? */
@@ -798,6 +842,12 @@ export class CathodeStage3D {
 
   private onPointerDown(e: PointerEvent) {
     if (e.button !== 0 || !this.accepts(e)) return
+    // the Display menu: a press on a row acts; a press anywhere else closes it (and goes on to do whatever it was aimed at)
+    if (this.menu?.isOpen) {
+      const row = this.pickMenu(e.clientX, e.clientY)
+      if (row) { e.preventDefault(); e.stopPropagation(); this.suppressClick = true; this.menuAct(row); return }
+      this.menu.close(); this.invalidate()
+    }
     if (!this.passThrough) this.canvas.focus({ preventScroll: true })
     const hit = this.pick(e.clientX, e.clientY)
     if (!hit) {                                        // empty space → orbit (the scene's, if passThrough)
@@ -830,7 +880,13 @@ export class CathodeStage3D {
     if (this.pressed) { this.send(this.pressed, 'drag', e); return }
     if (this.pressedControl) return
     if (!this.accepts(e)) { this.setHover(null, e); this.setHoverBar(null, null); this.setHoverGrip(null); return }
+    if (this.menu?.isOpen) {                           // over the Display menu: light its row, and nothing under it hears the pointer
+      const row = this.pickMenu(e.clientX, e.clientY)
+      this.menu.setHover(row)
+      if (row) { this.setHover(null, e); this.setHoverBar(null, null); this.setHoverGrip(null); this.setLens(null); this.setCursor('pointer'); return }
+    }
     const hit = this.pick(e.clientX, e.clientY)
+    this.setLens(hit && hit.part === 'body' && !hit.handle ? hit : null)
     this.setHoverGrip(hit?.handle ? hit.panel : null)
     this.setHover(hit && hit.part === 'body' && !hit.handle ? hit.panel : null, e)
     this.setHoverBar(hit && hit.part === 'bar' ? hit.panel : null, hit?.control ?? null)
@@ -907,13 +963,97 @@ export class CathodeStage3D {
       const t = e.target as HTMLElement | null
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
     }
+    if (this.menu) {
+      if (e.key === 'Escape' && this.menu.isOpen) { this.menu.close(); this.invalidate(); return }
+      // Cmd+Shift +/-  bends the panel the pointer is over (Shift so it doesn't shadow the browser's own Cmd +/- page zoom)
+      if (e.metaKey && e.shiftKey && /^[=+\-_]$/.test(e.key)) {
+        const target = this.menu.panel ?? this.hovered
+        if (target) { e.preventDefault(); this.stepBend(target, e.key === '=' || e.key === '+' ? CURVE_STEP : -CURVE_STEP); return }
+      }
+    }
     const p = this.focusedId ? this.panels.get(this.focusedId) : null
     if (p?.content.key) { p.content.key(e); p.invalidate() }
+  }
+
+  // ── The Display menu (in the scene) ─────────────────────────────────────────────────────────────────────
+
+  /** right-click: open the menu on the panel under the pointer (the body or the title bar); anywhere else, close it and leave the click to the page */
+  private onContextMenu(e: MouseEvent) {
+    if (!this.menu) return
+    if (!this.accepts(e)) { this.menu.close(); this.invalidate(); return }
+    if (this.dragging || this.resizing) return
+    const hit = this.pick(e.clientX, e.clientY)
+    if (!hit) { if (this.menu.isOpen) { this.menu.close(); this.invalidate() } return }
+    e.preventDefault(); e.stopPropagation()
+    this.setFocus(hit.panel.id)
+    const bw = hit.panel.content.width, bh = hit.panel.content.height
+    // the menu's corner is where the pointer is: a body point is (u, 1-v) of the body; a title-bar point opens it at the body's top edge
+    const x = hit.part === 'body' && hit.uv ? hit.uv.x * bw : (hit.uv ? hit.uv.x * bw : 0)
+    const y = hit.part === 'body' && hit.uv ? (1 - hit.uv.y) * bh : 0
+    this.menu.open(hit.panel, x, y, hit.panel.display)
+    this.invalidate()
+  }
+
+  /** open the menu on a panel programmatically (tests / tours); (x, y) is the menu's top-left in the body's px */
+  openDisplayMenu(id: string, x = 8, y = 8) {
+    const p = this.panels.get(id)
+    if (!this.menu || !p) return
+    this.menu.open(p, x, y, p.display)
+    this.invalidate()
+  }
+  closeDisplayMenu() { if (this.menu?.isOpen) { this.menu.close(); this.invalidate() } }
+  /** the panel the Display menu is open on, or null */
+  get displayMenuPanel(): Panel3D | null { return this.menu?.panel ?? null }
+
+  /** the menu row under a client point (the menu is a quad on its panel's plane — a plain ray hit), or null */
+  private pickMenu(clientX: number, clientY: number): MenuRow | null {
+    if (!this.menu?.isOpen) return null
+    this.setRay(clientX, clientY)
+    const hit = this.ray.intersectObject(this.menu.mesh, false)[0]
+    return hit?.uv ? this.menu.rowAtUV(hit.uv.x, hit.uv.y) : null
+  }
+
+  /** the client point of a menu row's centre (for tests / tours), or null when the menu is closed */
+  clientPointForMenuRow(row: MenuRow): { x: number; y: number } | null {
+    if (!this.menu?.isOpen) return null
+    const { x, y } = DisplayMenu3D.rowCentre(row)
+    this.menu.mesh.updateWorldMatrix(true, false)
+    const v = this.menu.mesh.localToWorld(new THREE.Vector3((x - DisplayMenu3D.width / 2) / this.pxPerUnit, (DisplayMenu3D.height / 2 - y) / this.pxPerUnit, 0)).project(this.camera)
+    const r = this.canvas.getBoundingClientRect()
+    return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height }
+  }
+
+  private menuAct(row: MenuRow) {
+    const p = this.menu?.panel
+    if (!p) return
+    const d = p.display
+    if (row === 'curve-' || row === 'curve+') { this.stepBend(p, row === 'curve+' ? CURVE_STEP : -CURVE_STEP); return }
+    this.applyDisplay(p, { [row]: !d[row] } as Partial<PanelDisplay>)
+  }
+
+  private stepBend(p: Panel3D, step: number) {
+    this.applyDisplay(p, { curvature: Math.max(CURVE_MIN, Math.min(CURVE_MAX, p.display.curvature + step)) })
+  }
+
+  private applyDisplay(p: Panel3D, d: Partial<PanelDisplay>) {
+    p.setDisplay(d)
+    if (this.menu?.panel === p) this.menu.update(p.display)
+    this.o.onPanelDisplay?.(p.id, p.display)
+    this.invalidate()
+  }
+
+  /** the hover magnifier: follow the pointer over a panel whose `magnify` is on; let go everywhere else */
+  private setLens(hit: StagePick | null) {
+    const on = hit && hit.uv && hit.panel.display.magnify ? hit.panel : null
+    if (this.lensPanel && this.lensPanel !== on) { this.lensPanel.content.surface.setLens(null); this.lensPanel.invalidate() }
+    this.lensPanel = on
+    if (on && hit!.uv) { on.content.surface.setLens({ x: hit!.uv.x, y: hit!.uv.y }); on.invalidate() }
   }
 
   // ── Resize (ray–plane on the panel's own plane; the TOP-LEFT corner stays put) ──────────────────────────
 
   private startResize(panel: Panel3D) {
+    this.menu?.close()
     panel.group.updateWorldMatrix(true, true)
     const q = panel.group.getWorldQuaternion(new THREE.Quaternion())
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
@@ -945,6 +1085,7 @@ export class CathodeStage3D {
   // ── Drag to move (ray–plane on the panel's own plane) ───────────────────────
 
   private startDrag(panel: Panel3D) {
+    this.menu?.close()
     panel.group.updateWorldMatrix(true, true)
     const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(panel.group.quaternion)
     const plane  = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, panel.group.position)
@@ -972,6 +1113,7 @@ export class CathodeStage3D {
     this.resizeObserver.disconnect()
     for (const off of this.disposers) off()
     for (const p of [...this.panels.values()]) this.removePanel(p.id)
+    this.menu?.dispose()
     this.controls?.dispose()
     try { this.renderer.forceContextLoss() } catch { /* no context */ }
     this.renderer.dispose()
