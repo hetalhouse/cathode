@@ -84,6 +84,7 @@ function appendCandles(n = 1) {
 // ── stage ───────────────────────────────────────────────────────────────────
 const controlEvents: string[] = []
 const resizeEvents: { id: string; w: number; h: number }[] = []
+const actionEvents: string[] = []
 const displayEvents: ({ id: string } & Record<string, unknown>)[] = []
 const before = new Map<string, ReturnType<CathodeStage3D['getCameraPose']>>()
 const stage = new CathodeStage3D({
@@ -92,6 +93,8 @@ const stage = new CathodeStage3D({
   cameraPosition: [0, 0.15, 3.3],
   // double-click a title bar → fly the camera to face that panel
   onPanelActivate: (id) => { const pose = stage.facingPose(id); if (pose) void stage.flyTo(pose) },
+  // title-bar action buttons (the Net-tilt panel's range picker) and the ✕
+  onPanelAction: (id, a) => { actionEvents.push(`${id}:${a}`); const p = stage.panels.get(id)!; p.setActions(p.actions.map((x) => ({ ...x, active: x.id === a }))) },
   // right-click a panel: the Display menu, drawn in the scene (scan lines / glow / magnify / bend); Cmd+Shift +/- bends the hovered panel
   displayMenu: true,
   onPanelDisplay: (id, d) => { displayEvents.push({ id, ...d }) },
@@ -112,9 +115,10 @@ const stage = new CathodeStage3D({
   },
 })
 stage.addPanel({ id: 'trades', title: 'Trades', content: grid,  position: [-0.78, 0, 0],    rotationY: 0.22,  look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
-stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
+stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature }, controls: ['minimize', 'maximize', 'close'], resizable: true,
+  actions: [{ id: '5m', label: '5m' }, { id: '15m', label: '15m' }, { id: '1H', label: '1H', active: true }, { id: '1D', label: '1D' }] })
 if (log) stage.addPanel({ id: 'log', title: 'Log', content: log, position: [-0.45, -1.1, 0.1], rotationY: 0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (candle) stage.addPanel({ id: 'candle', title: 'BTC-USD · 1h', content: candle, position: [0.35, -1.1, 0.1], rotationY: -0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (idle) setInterval(() => setTilt(Math.sin(Date.now() / 4000) * 0.9), 2500)
 
-;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, resizeEvents, displayEvents, log, appendLog, candle, appendCandles, candleCount: () => candleSeries.length }
+;(window as unknown as Record<string, unknown>).__stage3d = { stage, grid, gauge, setTilt, events, controlEvents, actionEvents, resizeEvents, displayEvents, log, appendLog, candle, appendCandles, candleCount: () => candleSeries.length }
