@@ -80,6 +80,8 @@ export interface CathodeStage3DOptions {
    * (minimize usually: stage.setPanelMinimized(id, !panel.minimized); maximize: fly the camera to fill the view, and back).
    */
   onPanelControl?: (id: string, control: PanelControl) => void
+  /** a title-bar action button was clicked (see PanelOptions.actions) */
+  onPanelAction?: (id: string, action: string) => void
   /**
    * A right-click on a panel opens a "Display" menu drawn IN the scene — Scan lines · Glow · Magnify (hover lens) · a Bend stepper — and Cmd+Shift +/- bends
    * the hovered panel. `true` or `{ colors }` (the menu's palette). The stage applies each change to the panel at once; `onPanelDisplay` lets the host persist it.
@@ -92,7 +94,13 @@ export interface CathodeStage3DOptions {
 }
 
 /** a title-bar control: the stage draws it, hit-tests it and reports clicks (onPanelControl) */
-export type PanelControl = 'minimize' | 'maximize'
+export type PanelControl = 'minimize' | 'maximize' | 'close'
+
+/**
+ * A title-bar ACTION: a small text button (a range picker's "1H", a tab) drawn left of the controls, with an `active` state. The stage hit-tests it
+ * and reports a click as onPanelAction(panelId, action.id); what it does — and which one is active — is the host's call (panel.setActions()).
+ */
+export interface PanelAction { id: string; label: string; active?: boolean }
 
 /** A camera pose in world space (what an external driver — another scene's camera — sets). */
 export interface StageCameraPose {
@@ -110,8 +118,10 @@ export interface PanelOptions {
   glow?: boolean
   /** default true; a hidden panel isn't drawn, picked or painted */
   visible?: boolean
-  /** title-bar controls, drawn left → right at the bar's right edge (default none) */
+  /** title-bar controls, drawn left → right at the bar's right edge (default none). 'close' is an ✕ — what it closes is the host's call (onPanelControl). */
   controls?: PanelControl[]
+  /** title-bar action buttons (text), drawn left of the controls (default none); change them with panel.setActions() */
+  actions?: PanelAction[]
   /** start collapsed to its title bar */
   minimized?: boolean
   /** a corner handle drags the panel to a new size (needs `content.resize`); default false */
@@ -130,6 +140,8 @@ export interface StagePick {
   content: { x: number; y: number } | null
   /** on the bar: the title-bar control under the pointer, if any */
   control: PanelControl | null
+  /** on the bar: the action button under the pointer (its id), if any */
+  action: string | null
   /** on the body: the pointer is over the resize handle (the bottom-right corner of a resizable panel) */
   handle: boolean
   /** the raycast hit's UV on the plane (0..1, y up) */
@@ -141,6 +153,8 @@ const BAR_PX = 26
 const BTN_W = 20, BTN_H = 18, BTN_GAP = 4, BAR_PAD = 8
 // the resize handle: a HANDLE_PX square at the body's bottom-right corner (geometric — hit-tested on the plane's UV, so a bend can't move it)
 const HANDLE_PX = 16
+// title-bar actions: text buttons (mono ACTION_FONT), ACTION_GAP apart
+const ACTION_FONT = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', ACTION_GAP = 4
 const DEFAULT_MIN = { w: 240, h: 160 }, DEFAULT_MAX = { w: 1600, h: 1000 }
 
 /** One panel: a surface mesh + a title bar, in a group the stage moves around. */
@@ -166,6 +180,8 @@ export class Panel3D {
   private _minimized = false
   private _maximized = false
   private hoverControl: PanelControl | null = null
+  private hoverAction: string | null = null
+  private _actions: PanelAction[] = []
   private barCanvas = document.createElement('canvas')
   private barTexture: THREE.CanvasTexture
 
@@ -173,6 +189,7 @@ export class Panel3D {
     this.id      = o.id
     this._title  = o.title ?? o.id
     this.controls = o.controls ?? []
+    this._actions = (o.actions ?? []).map((a) => ({ ...a }))
     this.content = o.content
     this.resizable = !!o.resizable && typeof o.content.resize === 'function'
     this.minSize = o.minSize ?? DEFAULT_MIN
@@ -290,13 +307,40 @@ export class Panel3D {
   }
 
   /** @internal the stage lights the control under the pointer */
-  setHoverControl(c: PanelControl | null) {
-    if (this.hoverControl === c) return
+  setHoverControl(c: PanelControl | null, a: string | null = null) {
+    if (this.hoverControl === c && this.hoverAction === a) return
     this.hoverControl = c
+    this.hoverAction = a
     this.invalidateBar()
   }
 
-  /** The box of a control in the title bar's own px (x from the bar's left, y from its top), or null if this panel has none. */
+  /** the title bar's action buttons */
+  get actions(): PanelAction[] { return this._actions.map((a) => ({ ...a })) }
+
+  /** replace the action buttons (e.g. move the `active` mark); repaints the bar only if something changed */
+  setActions(actions: PanelAction[]) {
+    const same = actions.length === this._actions.length && actions.every((a, i) => a.id === this._actions[i].id && a.label === this._actions[i].label && !!a.active === !!this._actions[i].active)
+    if (same) return
+    this._actions = actions.map((a) => ({ ...a }))
+    this.invalidateBar()
+  }
+
+  /** where the controls start (their left edge), in the bar's px */
+  private controlsLeft(): number {
+    return this.controls.length ? this.content.width - BAR_PAD - this.controls.length * (BTN_W + BTN_GAP) + BTN_GAP : this.content.width - BAR_PAD
+  }
+
+  /** the action buttons' rectangles in the bar's px (right-aligned, just left of the controls) */
+  actionRects(): { id: string; x: number; y: number; w: number; h: number }[] {
+    if (!this._actions.length) return []
+    const ctx = this.barCanvas.getContext('2d')!
+    ctx.font = ACTION_FONT
+    const widths = this._actions.map((a) => Math.ceil(ctx.measureText(a.label).width) + 14)
+    const total = widths.reduce((t, w) => t + w, 0) + (widths.length - 1) * ACTION_GAP
+    let x = this.controlsLeft() - 10 - total
+    return this._actions.map((a, i) => { const r = { id: a.id, x, y: (BAR_PX - BTN_H) / 2 - 1, w: widths[i], h: BTN_H }; x += widths[i] + ACTION_GAP; return r })
+  }
+
   controlRect(c: PanelControl): { x: number; y: number; w: number; h: number } | null {
     const i = this.controls.indexOf(c)
     if (i < 0) return null
@@ -310,6 +354,12 @@ export class Panel3D {
       const r = this.controlRect(c)!
       if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return c
     }
+    return null
+  }
+
+  /** The action button (its id) at a point in the title bar's px, or null. */
+  actionAt(px: number, py: number): string | null {
+    for (const r of this.actionRects()) if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return r.id
     return null
   }
 
@@ -385,10 +435,27 @@ export class Panel3D {
     ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
     ctx.textBaseline = 'middle'
     ctx.fillStyle = focused ? '#b6f5d2' : '#6fae8f'
-    const room = this.controls.length ? W - 10 - (BAR_PAD + this.controls.length * (BTN_W + BTN_GAP)) : W - 20
+    const ar = this.actionRects()
+    const room = ar.length ? ar[0].x - 18 : (this.controls.length ? W - 10 - (BAR_PAD + this.controls.length * (BTN_W + BTN_GAP)) : W - 20)
     ctx.fillText(this._title, 10, H / 2 - 1, Math.max(20, room))   // a long title squeezes to fit instead of running off the bar / under the controls
+    this.drawActions(ctx, focused, ar)
     this.drawControls(ctx, focused)
     this.barTexture.needsUpdate = true
+  }
+
+  /** the title-bar action buttons: a small box with the label; the active one is filled */
+  private drawActions(ctx: CanvasRenderingContext2D, focused: boolean, rects: { id: string; x: number; y: number; w: number; h: number }[]) {
+    ctx.font = ACTION_FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+    this._actions.forEach((a, i) => {
+      const r = rects[i]
+      if (a.active) { ctx.fillStyle = 'rgba(110,231,167,0.28)'; ctx.fillRect(r.x, r.y, r.w, r.h) }
+      else if (this.hoverAction === a.id) { ctx.fillStyle = 'rgba(110,231,167,0.14)'; ctx.fillRect(r.x, r.y, r.w, r.h) }
+      ctx.strokeStyle = a.active ? '#6ee7a7' : (focused ? '#3f8f6b' : '#2f6b4c'); ctx.lineWidth = 1
+      ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1)
+      ctx.fillStyle = a.active ? '#d5fbe6' : (focused ? '#b6f5d2' : '#6fae8f')
+      ctx.fillText(a.label, r.x + r.w / 2, r.y + r.h / 2 + 0.5)
+    })
+    ctx.textAlign = 'left'
   }
 
   /** the title-bar controls: strokes, not font glyphs (a glyph can fall back to a font that does not have it) */
@@ -400,7 +467,9 @@ export class Panel3D {
       ctx.lineWidth = 1.4
       const cx = r.x + r.w / 2, cy = r.y + r.h / 2
       ctx.beginPath()
-      if (c === 'minimize') {
+      if (c === 'close') {
+        ctx.moveTo(cx - 4, cy - 4); ctx.lineTo(cx + 4, cy + 4); ctx.moveTo(cx + 4, cy - 4); ctx.lineTo(cx - 4, cy + 4)               // close: ✕
+      } else if (c === 'minimize') {
         if (this._minimized) { ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy); ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5) }   // expand: +
         else { ctx.moveTo(cx - 5, cy + 3); ctx.lineTo(cx + 5, cy + 3) }                                                       // collapse: –
       } else if (this._maximized) {                                                                                         // restore: two squares
@@ -449,7 +518,7 @@ export class CathodeStage3D {
   private lastCursor = ''
   private readonly passThrough: boolean
   private swallowClick = false
-  private pressedControl: { panel: Panel3D; control: PanelControl } | null = null
+  private pressedControl: { panel: Panel3D; control: PanelControl | null; action: string | null } | null = null
   private resizing: { panel: Panel3D; tl: THREE.Vector3; right: THREE.Vector3; up: THREE.Vector3; plane: THREE.Plane; moved: boolean } | null = null
   private hoverGrip: Panel3D | null = null
   private hoverBar: Panel3D | null = null
@@ -730,9 +799,10 @@ export class CathodeStage3D {
     const part  = best.object === panel.bar ? 'bar' : 'body'
     const content = part === 'body' && best.uv ? panel.content.surface.contentPoint(best.uv.x, best.uv.y) : null
     const control = part === 'bar' && best.uv ? panel.controlAt(best.uv.x * panel.content.width, (1 - best.uv.y) * BAR_PX) : null
+    const action = part === 'bar' && best.uv && !control ? panel.actionAt(best.uv.x * panel.content.width, (1 - best.uv.y) * BAR_PX) : null
     const handle = part === 'body' && panel.resizable && !panel.minimized && !!best.uv
       && best.uv.x * panel.content.width > panel.content.width - HANDLE_PX && (1 - best.uv.y) * panel.content.height > panel.content.height - HANDLE_PX
-    return { panel, part, content, control, handle, uv: best.uv ? { x: best.uv.x, y: best.uv.y } : null }
+    return { panel, part, content, control, action, handle, uv: best.uv ? { x: best.uv.x, y: best.uv.y } : null }
   }
 
   /**
@@ -782,6 +852,17 @@ export class CathodeStage3D {
   }
 
   /** Client point of a title-bar control's centre (for tests / tours), or null. */
+  clientPointForAction(id: string, action: string): { x: number; y: number } | null {
+    const p = this.panels.get(id)
+    const r = p?.actionRects().find((a) => a.id === action)
+    if (!p || !r) return null
+    p.group.updateWorldMatrix(true, true)
+    const ppu = this.pxPerUnit
+    const v = p.bar.localToWorld(new THREE.Vector3((r.x + r.w / 2 - p.content.width / 2) / ppu, -((r.y + r.h / 2) - BAR_PX / 2) / ppu, 0)).project(this.camera)
+    const rect = this.canvas.getBoundingClientRect()
+    return { x: rect.left + ((v.x + 1) / 2) * rect.width, y: rect.top + ((1 - v.y) / 2) * rect.height }
+  }
+
   clientPointForControl(id: string, control: PanelControl): { x: number; y: number } | null {
     const p = this.panels.get(id)
     const r = p?.controlRect(control)
@@ -859,8 +940,8 @@ export class CathodeStage3D {
     if (this.controls) this.controls.enabled = false   // …and never orbits
     this.setFocus(hit.panel.id)
     this.suppressClick = false
-    if (hit.part === 'bar' && hit.control) {
-      this.pressedControl = { panel: hit.panel, control: hit.control }   // a press on a control is a button, never a drag
+    if (hit.part === 'bar' && (hit.control || hit.action)) {
+      this.pressedControl = { panel: hit.panel, control: hit.control, action: hit.action }   // a press on a control is a button, never a drag
       this.setCursor('pointer')
     } else if (hit.part === 'bar') {
       this.startDrag(hit.panel)
@@ -889,19 +970,19 @@ export class CathodeStage3D {
     this.setLens(hit && hit.part === 'body' && !hit.handle ? hit : null)
     this.setHoverGrip(hit?.handle ? hit.panel : null)
     this.setHover(hit && hit.part === 'body' && !hit.handle ? hit.panel : null, e)
-    this.setHoverBar(hit && hit.part === 'bar' ? hit.panel : null, hit?.control ?? null)
+    this.setHoverBar(hit && hit.part === 'bar' ? hit.panel : null, hit?.control ?? null, hit?.action ?? null)
     if (!hit) { this.setCursor(''); return }
-    if (hit.part === 'bar') { this.setCursor(hit.control ? 'pointer' : 'grab'); return }
+    if (hit.part === 'bar') { this.setCursor(hit.control || hit.action ? 'pointer' : 'grab'); return }
     if (hit.handle) { this.setCursor('nwse-resize'); return }
     const cursor = this.send(hit.panel, 'move', e)
     if (cursor) this.setCursor(cursor)
   }
 
   /** light the control under the pointer (and clear the previous panel's) */
-  private setHoverBar(panel: Panel3D | null, control: PanelControl | null) {
-    if (this.hoverBar && this.hoverBar !== panel) this.hoverBar.setHoverControl(null)
+  private setHoverBar(panel: Panel3D | null, control: PanelControl | null, action: string | null = null) {
+    if (this.hoverBar && this.hoverBar !== panel) this.hoverBar.setHoverControl(null, null)
     this.hoverBar = panel
-    panel?.setHoverControl(control)
+    panel?.setHoverControl(control, action)
   }
 
   private setHoverGrip(panel: Panel3D | null) {
@@ -945,6 +1026,7 @@ export class CathodeStage3D {
     if (hit && hit.part === 'body') this.send(hit.panel, 'click', e)
     if (hit && hit.part === 'bar') {
       if (hit.control) this.o.onPanelControl?.(hit.panel.id, hit.control)
+      else if (hit.action) this.o.onPanelAction?.(hit.panel.id, hit.action)
       else if (e.detail >= 2) this.o.onPanelActivate?.(hit.panel.id)
     }
   }
