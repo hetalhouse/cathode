@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.18.0 — 2026-11-23
+
+**Title-bar actions and a close control.** A `CathodeStage3D` panel can now be dismissed and can carry a picker in its title bar — what an on-demand
+focus chart needs (an ✕ and its `5m / 15m / 1H / 1D` range buttons), and any panel that wants tabs. All additive: a panel without actions / close is unchanged.
+
+- **`actions: [{ id, label, active? }]`** on `addPanel`: small **text buttons** drawn just left of the controls, with an **active** state (filled) and a hover
+  highlight. A click is reported as `onPanelAction(panelId, actionId)` — never a drag, never the "face this panel" double-click. **`panel.setActions(next)`**
+  moves the active mark and repaints the bar only if something changed. The title squeezes clear of them (the room maths is byte-identical when there are none).
+- **`controls` gains `'close'`** (an ✕), reported through `onPanelControl(id, 'close')`; what closing means is the host's call.
+- **`stage.clientPointForAction(id, actionId)`** for tests / tours; `StagePick` gains `action`.
+
+New exports: type `PanelAction`. New options / members: `PanelOptions.actions`, `CathodeStage3DOptions.onPanelAction`, `Panel3D.actions` / `setActions` /
+`actionRects` / `actionAt`, `CathodeStage3D.clientPointForAction`; `PanelControl` is now `'minimize' | 'maximize' | 'close'`.
+Type-level notes: `StagePick` gains a **required** field (`action`), and `PanelControl` gains a member (an exhaustive `switch` over it needs a `'close'` case) —
+only relevant if you construct a `StagePick` yourself or switch over the union.
+
 ## 0.17.0 — 2026-11-23
 
 **The Display menu, drawn in the scene — and the hover magnifier on stage panels.** A right-click on a `CathodeStage3D` panel opens the CRT
