@@ -83,6 +83,8 @@ export interface CathodeStage3DOptions {
      * (minimize usually: stage.setPanelMinimized(id, !panel.minimized); maximize: fly the camera to fill the view, and back).
      */
     onPanelControl?: (id: string, control: PanelControl) => void;
+    /** a title-bar action button was clicked (see PanelOptions.actions) */
+    onPanelAction?: (id: string, action: string) => void;
     /**
      * A right-click on a panel opens a "Display" menu drawn IN the scene — Scan lines · Glow · Magnify (hover lens) · a Bend stepper — and Cmd+Shift +/- bends
      * the hovered panel. `true` or `{ colors }` (the menu's palette). The stage applies each change to the panel at once; `onPanelDisplay` lets the host persist it.
@@ -103,7 +105,16 @@ export interface CathodeStage3DOptions {
     }) => void;
 }
 /** a title-bar control: the stage draws it, hit-tests it and reports clicks (onPanelControl) */
-export type PanelControl = 'minimize' | 'maximize';
+export type PanelControl = 'minimize' | 'maximize' | 'close';
+/**
+ * A title-bar ACTION: a small text button (a range picker's "1H", a tab) drawn left of the controls, with an `active` state. The stage hit-tests it
+ * and reports a click as onPanelAction(panelId, action.id); what it does — and which one is active — is the host's call (panel.setActions()).
+ */
+export interface PanelAction {
+    id: string;
+    label: string;
+    active?: boolean;
+}
 /** A camera pose in world space (what an external driver — another scene's camera — sets). */
 export interface StageCameraPose {
     position: [number, number, number];
@@ -119,8 +130,10 @@ export interface PanelOptions {
     glow?: boolean;
     /** default true; a hidden panel isn't drawn, picked or painted */
     visible?: boolean;
-    /** title-bar controls, drawn left → right at the bar's right edge (default none) */
+    /** title-bar controls, drawn left → right at the bar's right edge (default none). 'close' is an ✕ — what it closes is the host's call (onPanelControl). */
     controls?: PanelControl[];
+    /** title-bar action buttons (text), drawn left of the controls (default none); change them with panel.setActions() */
+    actions?: PanelAction[];
     /** start collapsed to its title bar */
     minimized?: boolean;
     /** a corner handle drags the panel to a new size (needs `content.resize`); default false */
@@ -157,6 +170,8 @@ export interface StagePick {
     } | null;
     /** on the bar: the title-bar control under the pointer, if any */
     control: PanelControl | null;
+    /** on the bar: the action button under the pointer (its id), if any */
+    action: string | null;
     /** on the body: the pointer is over the resize handle (the bottom-right corner of a resizable panel) */
     handle: boolean;
     /** the raycast hit's UV on the plane (0..1, y up) */
@@ -194,6 +209,8 @@ export declare class Panel3D {
     private _minimized;
     private _maximized;
     private hoverControl;
+    private hoverAction;
+    private _actions;
     private barCanvas;
     private barTexture;
     constructor(stage: CathodeStage3D, o: PanelOptions);
@@ -220,8 +237,21 @@ export declare class Panel3D {
     /** The maximize control's glyph state (a maximized panel shows "restore"). A visual flag only — what maximized MEANS is the host's. */
     setMaximized(v: boolean): void;
     /** @internal the stage lights the control under the pointer */
-    setHoverControl(c: PanelControl | null): void;
-    /** The box of a control in the title bar's own px (x from the bar's left, y from its top), or null if this panel has none. */
+    setHoverControl(c: PanelControl | null, a?: string | null): void;
+    /** the title bar's action buttons */
+    get actions(): PanelAction[];
+    /** replace the action buttons (e.g. move the `active` mark); repaints the bar only if something changed */
+    setActions(actions: PanelAction[]): void;
+    /** where the controls start (their left edge), in the bar's px */
+    private controlsLeft;
+    /** the action buttons' rectangles in the bar's px (right-aligned, just left of the controls) */
+    actionRects(): {
+        id: string;
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    }[];
     controlRect(c: PanelControl): {
         x: number;
         y: number;
@@ -230,6 +260,8 @@ export declare class Panel3D {
     } | null;
     /** The control at a point in the title bar's px, or null. */
     controlAt(px: number, py: number): PanelControl | null;
+    /** The action button (its id) at a point in the title bar's px, or null. */
+    actionAt(px: number, py: number): string | null;
     get visible(): boolean;
     /** Show / hide. Prefer stage.setPanelVisible(), which also releases focus / hover / drag. */
     setVisible(v: boolean): void;
@@ -246,6 +278,8 @@ export declare class Panel3D {
     /** @internal called by the stage's frame */
     paintIfDirty(): void;
     private drawBar;
+    /** the title-bar action buttons: a small box with the label; the active one is filled */
+    private drawActions;
     /** the title-bar controls: strokes, not font glyphs (a glyph can fall back to a font that does not have it) */
     private drawControls;
     dispose(): void;
@@ -340,6 +374,10 @@ export declare class CathodeStage3D {
         y: number;
     } | null;
     /** Client point of a title-bar control's centre (for tests / tours), or null. */
+    clientPointForAction(id: string, action: string): {
+        x: number;
+        y: number;
+    } | null;
     clientPointForControl(id: string, control: PanelControl): {
         x: number;
         y: number;
