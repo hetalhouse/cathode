@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.20.0 — 2026-11-24
+
+**Themeable title bars, a cockpit style, an ⓘ control, and a live-themeable Display menu.** A host whose theme changes — or whose 2D windows have a different look — can now dress
+the 3D stage to match, live. All additive and opt-in: the default bar is unchanged, pinned pixel-for-pixel by a golden spec (11 states) generated before the change.
+
+- **`barColors` / `stage.setBarColors(partial)`** — the title bars' palette: fill (resting / focused), bottom rule, text, action outlines, accent (hover / active fills, the status dot),
+  active-action label, and the cockpit title colour. `DEFAULT_BAR_COLORS` is the original green-on-black bar.
+- **`barStyle: 'plain' | 'cockpit'` / `stage.setBarStyle()`** — `'cockpit'` is what a dashboard's 2D windows wear: a glowing status dot, then a small, bold, tracked **UPPERCASE** title.
+- **`PanelControl` gains `'info'`** — an ⓘ (drawn, hit-tested and ordered like the other controls); reported through `onPanelControl(id, 'info')`. What it does is the host's call.
+- **`stage.setMenuColors(partial)`** — re-theme the in-scene Display menu live; an open menu repaints at once.
+
+New exports: `DEFAULT_BAR_COLORS`; types `BarColors`, `BarStyle`. New options / members: `CathodeStage3DOptions.barColors` / `.barStyle`, `CathodeStage3D.barColors` / `.barStyle` /
+`setBarColors` / `setBarStyle` / `setMenuColors`.
+Type-level note: `PanelControl` gains a member (an exhaustive `switch` over it needs an `'info'` case) — only relevant if you switch over the union.
+
 ## 0.19.0 — 2026-11-23
 
 **A wall of mini candle charts as a stage panel.** The dashboard's Charts window is a wall of small candle cards; `candleWallContent()` puts the same wall on a
