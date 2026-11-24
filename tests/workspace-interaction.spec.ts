@@ -56,7 +56,7 @@ test.describe('CathodeContainer interaction', () => {
     const watch = collectConsoleErrors(page);
     await page.addInitScript(() => localStorage.clear());
 
-    await page.goto('/');
+    await page.goto('/?tab=workspace');   // (the demo opens on the 3D Workspace tab; these drive the 2D Workspace)
     // Default tab is workspace
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1500);
@@ -117,7 +117,7 @@ test.describe('CathodeContainer interaction', () => {
     const watch = collectConsoleErrors(page);
     await page.addInitScript(() => localStorage.clear());
 
-    await page.goto('/');
+    await page.goto('/?tab=workspace');   // (the demo opens on the 3D Workspace tab; these drive the 2D Workspace)
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1500);
 

@@ -667,6 +667,44 @@ export class CathodeStage3D {
   }
 
   /**
+   * The camera pose that frames SEVERAL panels at once — the workspace "zoom out": looks along the panels' average facing, from far enough back that every one of them (title bars
+   * included) is in view with `margin` (default 8%) to spare, centred on the group. `ids` limits it to those panels (default: all). Never closer than `minDistance` (default 0), so an
+   * Overview can't be a zoom IN on a small group. Pure, like facingPose: it moves nothing — apply it yourself or flyTo() it. Null when there is nothing to frame.
+   */
+  framePose(ids?: string[], opts: { margin?: number; minDistance?: number } = {}): StageCameraPose | null {
+    const list = (ids ?? [...this.panels.keys()]).map((id) => this.panels.get(id)).filter((p): p is Panel3D => !!p)
+    if (!list.length) return null
+    const ppu = this.pxPerUnit, barH = BAR_PX / ppu
+    // the group's facing: the mean of the panels' normals (straight at +z for an unrotated layout)
+    const normal = new THREE.Vector3()
+    for (const p of list) { p.group.updateWorldMatrix(true, true); normal.add(new THREE.Vector3(0, 0, 1).applyQuaternion(p.group.getWorldQuaternion(new THREE.Quaternion()))) }
+    normal.normalize()
+    if (!isFinite(normal.x)) normal.set(0, 0, 1)
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), normal)
+    if (right.lengthSq() < 1e-6) right.set(1, 0, 0)
+    right.normalize()
+    const up = new THREE.Vector3().crossVectors(normal, right).normalize()
+    // every panel's corners (body + the bar above it; a collapsed panel is only its bar), in that basis
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, depth = 0, n = 0
+    for (const p of list) {
+      const w = p.content.width / ppu, bodyH = p.content.height / ppu
+      const top = bodyH / 2 + barH, bottom = p.minimized ? bodyH / 2 : -bodyH / 2
+      for (const [cx, cy] of [[-w / 2, bottom], [w / 2, bottom], [-w / 2, top], [w / 2, top]]) {
+        const v = p.body.localToWorld(new THREE.Vector3(cx, cy, 0))
+        const X = v.dot(right), Y = v.dot(up)
+        x0 = Math.min(x0, X); x1 = Math.max(x1, X); y0 = Math.min(y0, Y); y1 = Math.max(y1, Y); depth += v.dot(normal); n++
+      }
+    }
+    const m = 1 + (opts.margin ?? 0.08)
+    const W = (x1 - x0) * m, H = (y1 - y0) * m
+    const t = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))
+    const d = Math.max(H / 2 / t, W / 2 / (t * this.camera.aspect), opts.minDistance ?? 0)
+    const center = right.clone().multiplyScalar((x0 + x1) / 2).addScaledVector(up, (y0 + y1) / 2).addScaledVector(normal, depth / n)
+    const pos = center.clone().addScaledVector(normal, d)
+    return { position: [pos.x, pos.y, pos.z], target: [center.x, center.y, center.z] }
+  }
+
+  /**
    * Tween the camera to a pose (ease in-out). For a stage that OWNS its camera — in overlay mode
    * the host drives the camera, so apply facingPose() there instead. Resolves when it lands; a new
    * flyTo replaces one in flight. `ms <= 0` snaps.
