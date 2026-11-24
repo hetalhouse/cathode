@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.21.0 — 2026-11-24
+
+**Grid view state in `GridApi`.** A host that shows one grid in two places — the dashboard's 2D window and its 3D stage panel — can now carry the grid's whole view between them. Filter and
+column state were already in the API; this adds what was missing. Additive: nothing existing changes.
+
+- **`getSortModel()` / `setSortModel([{ colId, sort }])`** — read or replace the sort (priority order kept). Unlike `applyColumnState`, which only ever *adds* a sort, `setSortModel([])` **clears** it.
+- **`getScrollY()` / `setScrollY(y)`** — the vertical scroll offset in px. `setScrollY` clamps to the range and is applied after the pending sort / filter / data updates (those reset the scroll to
+  the top), so it is safe to call straight after `setSortModel` / `setFilterModel` / `setGridOption('rowData', …)`; `getScrollY()` reflects it on the next tick.
+
+With `getFilterModel()` / `setFilterModel()` and `getColumnState()` / `applyColumnState()` that is a grid's complete view: sort, filter, column widths / visibility, scroll.
+
+New members on `GridApi` only (a host that *implements* `GridApi` itself needs the four methods).
+
 ## 0.20.0 — 2026-11-24
 
 **Themeable title bars, a cockpit style, an ⓘ control, and a live-themeable Display menu.** A host whose theme changes — or whose 2D windows have a different look — can now dress
