@@ -130,6 +130,16 @@ export interface GridApi {
   exportDataAsCsv(params?: { fileName?: string }): void
   resetColumnState(): void
 
+  /** The columns the grid is sorted by, in priority order (`[]` = unsorted). */
+  getSortModel(): { colId: string; sort: 'asc' | 'desc' }[]
+  /** Replace the sort. Unlike `applyColumnState` (which only ever ADDS a sort), `[]` clears it — what a host needs to make two views of one grid agree. */
+  setSortModel(model: { colId: string; sort: 'asc' | 'desc' }[]): void
+  /** The vertical scroll offset in px. */
+  getScrollY(): number
+  /** Scroll to `y` px (clamped to the range). Applied after the pending sort / filter / data updates settle — those reset the scroll to the top — so it is safe to call straight after
+   *  `setSortModel` / `setFilterModel` / `setGridOption('rowData', …)`; `getScrollY()` reflects it on the next tick. */
+  setScrollY(y: number): void
+
   /** Immediately re-measure the container and resize the WebGL canvas.
    *  Call this when the parent container is resized programmatically
    *  (e.g. a draggable panel) so the ResizeObserver delay is bypassed. */
