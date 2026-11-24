@@ -1,0 +1,94 @@
+<!doctype html>
+<!--
+  A desktop-style workspace inside a three.js scene — zoom in, zoom out.
+  One WebGLRenderer, one camera, four live panels (a grid, a candle chart, a gauge, a log) hung in 3D; the camera is the interface.
+  Scroll = zoom · drag = orbit · □ = expand a panel (the camera flies in to fill the view, and back) · Overview = zoom out until everything is in frame.
+  Built with @hetalhouse/cathode (https://www.npmjs.com/package/@hetalhouse/cathode) — panels are canvas surfaces on three.js planes with a CRT barrel warp, raycast input.
+  No build step: open this file from any static server.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>three.js + cathode — a 3D workspace, zoom in and out</title>
+<script type="importmap">
+{ "imports": {
+    "three": "https://esm.sh/three@0.170.0",
+    "three/addons/": "https://esm.sh/three@0.170.0/examples/jsm/",
+    "vue": "https://esm.sh/vue@3.5.13",
+    "@hetalhouse/cathode": "https://esm.sh/@hetalhouse/cathode@0.22.0?external=three,vue"
+} }
+</script>
+<style>
+  html, body { margin: 0; height: 100%; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #33465e; }
+  body { background: radial-gradient(ellipse at 50% 35%, #fbfdff 0%, #eaf1fa 55%, #d9e5f3 100%); overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #bar { position: fixed; top: 12px; left: 14px; right: 14px; display: flex; gap: 6px; align-items: center; z-index: 2; pointer-events: none; }
+  #bar > * { pointer-events: auto; }
+  #bar b { color: #2f6fd0; letter-spacing: .14em; text-transform: uppercase; margin-right: 8px; }
+  button { font: inherit; font-weight: 600; padding: 5px 11px; border: 1px solid #b9c7da; border-radius: 4px; background: rgba(255,255,255,.75); color: #33465e; cursor: pointer; }
+  button:hover { background: #2f6fd0; border-color: #2f6fd0; color: #fff; }
+  #hint { position: fixed; left: 0; right: 0; bottom: 10px; text-align: center; color: #5a6b80; pointer-events: none; }
+  #hint a { color: #2f6fd0; pointer-events: auto; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="bar"><b>3D workspace</b><button id="overview">Overview</button><button id="next">Zoom in ▸</button></div>
+<div id="hint">scroll to <b>zoom</b> · drag to <b>orbit</b> · <b>□</b> expands a panel · <a href="https://github.com/hetalhouse/cathode">@hetalhouse/cathode</a> on three.js</div>
+
+<script type="module">
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { CathodeStage3D, gridContent, candleContent, gaugeContent, logContent } from '@hetalhouse/cathode'
+
+// ── data: a random walk for the chart, a few rows for the grid ──────────────────────────────────────────────────
+let p = 100
+const candles = Array.from({ length: 160 }, (_, i) => {
+  const open = p, close = p * (1 + (Math.sin(i / 9) * 0.5 + (Math.random() - 0.5)) * 0.012); p = close
+  return { start: Date.UTC(2026, 0, 1) + i * 3_600_000, open, close, high: Math.max(open, close) * 1.004, low: Math.min(open, close) * 0.996, volume: 800 + Math.random() * 900 }
+})
+const names = ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK', 'DOGE', 'ADA', 'XRP']
+const rows = Array.from({ length: 60 }, (_, i) => ({ id: i + 1, product: names[i % 8] + '-USD', side: i % 3 ? 'long' : 'short', pnl: Math.round(Math.sin(i * 1.7) * 480) / 10 }))
+const logEntries = Array.from({ length: 40 }, (_, i) => ({ ts: Date.now() - (40 - i) * 7000, level: ['info', 'success', 'warn', 'info'][i % 4], text: `scanner cycle ${i * 3} complete — ${i % 5} candidates passed` }))
+
+// ── the stage: one renderer, a transparent canvas over the page's own sky ───────────────────────────────────
+const BARS = { bg: '#e6edf6', bgFocused: '#f3f7fc', line: '#b9c7da', lineFocused: '#2f6fd0', text: '#5a6b80', textFocused: '#1d2b3d', title: '#2f6fd0', titleFocused: '#1f56ad', box: '#b9c7da', boxFocused: '#8aa0bd', accent: '#1f9d66', accentText: '#0b2a1a' }
+const before = new Map()
+const stage = new CathodeStage3D({
+  container: document.getElementById('stage'), transparent: true, cameraPosition: [0, 0, 6],
+  controls: (camera, dom) => { const c = new OrbitControls(camera, dom); c.enableDamping = true; c.minDistance = 0.4; c.maxDistance = 16; return c },
+  barStyle: 'cockpit', barColors: BARS,
+  onPanelActivate: (id) => stage.flyTo(stage.facingPose(id, { margin: 0.04 }), 650),          // double-click a title bar: face it
+  onPanelControl: (id, control) => {
+    const panel = stage.panels.get(id)
+    if (control === 'minimize') return stage.setPanelMinimized(id, !panel.minimized)
+    if (control !== 'maximize') return
+    if (!panel.maximized) { before.set(id, stage.getCameraPose()); panel.setMaximized(true); stage.flyTo(stage.facingPose(id, { margin: 0.03 }), 700) }   // EXPAND: fly in until it fills the view
+    else { panel.setMaximized(false); stage.flyTo(before.get(id), 700) }                                                                                    // restore: fly back out
+  },
+})
+
+// each panel is a rectangle in stage px (title bar included), like a 2D workspace; 360 px = one world unit
+const L = { trades: [0, 0, 520, 300], candle: [540, 0, 600, 300], tilt: [1160, 0, 320, 300], log: [0, 350, 1480, 220] }
+const W = 1480, H = 590, theme = 'paper', look = { curvature: 5, scanlines: false, vignette: false }
+const place = (id, content, title) => { const [x, y, w, h] = L[id]
+  stage.addPanel({ id, title, content, look, glow: false, controls: ['minimize', 'maximize'], resizable: true, position: [(x + w / 2 - W / 2) / 360, -((y + 26 + h / 2) - H / 2) / 360, 0] }) }
+place('trades', gridContent({ width: 520, height: 300, theme, rowData: rows, columnDefs: [
+  { field: 'id', headerName: 'ID', width: 60, sortable: true }, { field: 'product', headerName: 'Product', width: 150, sortable: true, filter: true },
+  { field: 'side', headerName: 'Side', width: 100, sortable: true }, { field: 'pnl', headerName: 'P&L %', width: 120, sortable: true, cellStyle: (c) => ({ color: c.value >= 0 ? '#16794f' : '#c0392b' }) }] }), 'Open positions')
+place('candle', candleContent({ width: 600, height: 300, theme, candles }), 'BTC-USD · 1h')
+const gauge = gaugeContent({ width: 320, height: 300, theme, value: 0.62, min: -1, max: 1, stance: 'net long', sub: '5 long · 3 short', leftLabel: 'SHORT', rightLabel: 'LONG', caption: 'tilt of the book' })
+place('tilt', gauge, 'Net tilt')
+place('log', logContent({ width: 1480, height: 220, theme, entries: logEntries }), 'Monitor log')
+setInterval(() => { const v = Math.round(Math.sin(Date.now() / 4000) * 90) / 100; gauge.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) }, 2500)
+
+// ── zoom out / zoom in ──────────────────────────────────────────────────────────────────────────────────────────
+const overview = () => stage.flyTo(stage.framePose(undefined, { margin: 0.06 }), 800)       // frame EVERY panel
+stage.setCameraPose(stage.framePose(undefined, { margin: 0.06 }))                           // start from the overview
+document.getElementById('overview').onclick = overview
+let i = 0
+document.getElementById('next').onclick = () => stage.flyTo(stage.facingPose(['trades', 'candle', 'tilt', 'log'][i++ % 4], { margin: 0.05 }), 800)   // fly in on each panel in turn
+window.__example = { stage }
+</script>
+</body>
+</html>

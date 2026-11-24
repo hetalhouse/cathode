@@ -14,10 +14,45 @@
 
 <sup>Curvature is **signed** (−45…45): positive bulges convex like a CRT tube, negative dishes concave — the panel wraps around a focal point like a room. Sweep reproduces with `npm run capture:bend`. Header filter popups are drawn in-canvas, so they bend too.</sup>
 
-**[▶ Try it live](https://bradyhouse.github.io/cathode/)** — the curve slider is the fun part.
+**[▶ Try it live](https://bradyhouse.github.io/cathode/)** — opens on the 3D workspace; the curve slider is the fun part on the Grid tab.
 **[🎬 Watch the 26-second tour (mp4)](https://github.com/hetalhouse/cathode/raw/main/docs/demo.mp4)** — workspace → magnifier lens → three.js candles → themes.
 
 <sup>Stills reproduce with `npm run capture:hero` (see `tools/capture-hero.mjs`); the workspace hero lives at [`docs/hero.png`](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/hero.png).</sup>
+
+---
+
+## 3D workspace — zoom in, zoom out
+
+Every widget can hang as a panel in **one three.js scene**, and the camera becomes the interface: scroll to **zoom**, drag to **orbit**, press **□** and a panel is *expanded* — the camera flies in until it fills the view — **Overview** zooms the whole workspace back out until everything is in frame. Day (paper) or night (phosphor), re-dressed live.
+
+![the 3D workspace, day theme — a grid, a candle chart, a gauge, a wall of mini charts and a log hung in one three.js scene](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-overview.png)
+
+![zooming out to the whole workspace, in on a panel, out again, in on the chart — the camera is the interface](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-zoom.gif)
+
+![zoomed in on the candle chart — a panel fills the screen](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-zoom.png)
+
+![the same workspace at night — phosphor panels, a green-on-black title bar, re-dressed live from the Night button](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-night.png)
+
+**[▶ Open the 3D workspace](https://bradyhouse.github.io/cathode/)** — it is the demo's front door; **▶ Tour** plays the zoom for you. Stills and the sweep reproduce with `npm run capture:workspace`.
+
+```ts
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { CathodeStage3D, gridContent, candleContent } from '@hetalhouse/cathode'
+
+const stage = new CathodeStage3D({
+  container: el, transparent: true,
+  controls: (camera, dom) => new OrbitControls(camera, dom),
+  barStyle: 'cockpit',                                   // title bars like a desktop's windows
+  onPanelControl: (id, c) => c === 'maximize' && stage.flyTo(stage.facingPose(id, { margin: 0.03 }), 700),   // □ = expand
+})
+stage.addPanel({ id: 'trades', title: 'Open positions', content: gridContent({ width: 560, height: 320, columnDefs, rowData, theme: 'paper' }),
+  position: [-0.9, 0, 0], controls: ['minimize', 'maximize'] })
+// …more panels…
+await stage.flyTo(stage.framePose(), 800)                // Overview — zoom out until every panel is in frame
+await stage.flyTo(stage.facingPose('trades'), 700)       // zoom in on one
+```
+
+Full API below: [**In 3D space — `CathodeStage3D`**](#in-3d-space--cathodestage3d). A standalone **three.js example** — one HTML file, an import map, no build step — is in [`examples/threejs-workspace.html`](https://github.com/hetalhouse/cathode/blob/main/examples/threejs-workspace.html).
 
 ---
 
@@ -142,7 +177,11 @@ Also in the family: **`CathodeCandleGrid`** — a wall of N mini candle charts r
 
 And **`CathodeGauge`** — a bipolar gauge through the same pipeline: a readout (big figure + `stance` + `sub`), a needle on a `leftLabel`↔`rightLabel` axis that eases to each new `value` on `[min, max]`, then an optional boxed `caption`, a dim `note` and a wrapping row of `items` chips (`{ label, side: 'left' | 'right', value, tone }`, lettered by `sideLetters`) — the shape of a long/short book's net-tilt read-out, one chip per position. `marks` draws labelled ticks on the axis (a second hurdle, a danger line) and `meter` a secondary bar under it — a filled track on `[min, max]` with threshold ticks, a label row and the value at the right (a margin guard, say). `colors` overrides the pole colours (e.g. your P&L up/down), `animate: false` snaps the needle; `emptyText` stands in for an empty `items`. Same `theme` / `curvature` / `scanlines` / `glow` / `magnify` as the rest. See the demo's GAUGE tab.
 
-### In 3D space — `CathodeStage3D` *(experimental, unreleased)*
+| `perspective` | `number` | `1400` | CSS perspective distance (px) — higher = subtler vanishing point |
+| `scanlines` | `boolean` | `true` | Overlay repeating scanline gradient |
+| `glow` | `boolean` | `true` | Apply `text-shadow` phosphor glow to cell text |
+
+### In 3D space — `CathodeStage3D`
 
 Every widget can also live as a **panel in one three.js scene** instead of a CSS window: one renderer, a perspective camera, panels that tilt, overlap and recede, and input by raycast.
 
@@ -173,12 +212,9 @@ stage.addPanel({ id: 'trades', title: 'Trades', content: grid, position: [-0.8, 
 - **Resize.** `resizable: true` on `addPanel` (with `minSize` / `maxSize`, default 240×160 … 1600×1000) puts a grip in the panel's bottom-right corner; dragging it resizes the panel and the **top-left corner stays put** (the panel's centre moves). The handle is **geometric** — hit-tested on the plane's UV (`pick(…).handle`), so a screen bend can't move it — and the cursor shows `nwse-resize`. The content must support it: `PanelContent.resize(w, h)` — `gridContent` re-fits its columns and viewport (more room, more columns / rows), `gaugeContent` redraws, and a custom `surfaceContent` passes its own — then the surface's backing store follows. `onPanelResized(id, size, pos)` fires once on release; `getLayout()` / `applyLayout()` carry `size` (apply the position AND the size to restore a saved arrangement); `panel.resize(w, h)` does it programmatically; a collapsed panel has no handle.
 - **Title-bar controls + minimize.** `controls: ['minimize', 'maximize']` on `addPanel` draws the buttons at the bar's right edge (strokes, not font glyphs); the stage hit-tests them (`pick(…).control`), shows a hand over them, and reports a click as `onPanelControl(id, control)` — a press on a button is a button, never a drag, and never a "face this panel" double-click. **What a click means is the host's call.** The stage gives you the state: `stage.setPanelMinimized(id, v)` collapses a panel to its title bar (the body is hidden and no longer picked; `facingPose` then fits the bar alone; `layout.minimized` round-trips; the button shows "expand"), and `panel.setMaximized(v)` flips the maximize button to "restore" — typically paired with `stage.facingPose(id, { margin: 0.03 })` + `flyTo` to fill the view, and back to the remembered pose. `stage.clientPointForControl(id, control)` is there for tests and tours.
 - **`panel.setTitle(text)`** changes a panel's title-bar text after it's created — for a live count (`"Open positions (6)"`) — repainting only the bar, and only when the text changed. `panel.title` reads it; a title too long for the bar is squeezed to fit.
+- **Overview — zoom the whole workspace out.** `stage.framePose(ids?, { margin?, minDistance? })` is the camera pose that frames *several* panels at once (every title bar included), looking along their average facing — `await stage.flyTo(stage.framePose(), 800)` zooms out until everything is in view, wherever the panels were dragged; pass `ids` to frame a subset, `minDistance` so an Overview can never be a zoom *in*. Pure, like `facingPose` (it moves nothing). Together: `facingPose(id)` = **zoom in** on one panel, `framePose()` = **zoom out** to all of them.
 - **Facing, activation, visibility** — `stage.facingPose(id)` is the camera pose that looks straight at a panel (title bar included) from the front, with a margin; it moves nothing, so an overlay host applies it to its own camera, and a stage that owns its camera calls `stage.flyTo(pose, ms)` (an eased tween that resolves when it lands). `onPanelActivate(id)` fires when a title bar is double-clicked — the natural hook for "face this panel". `PanelPointerEvent.detail` is the click count on `'click'` events (1, then 2), and `gridContent` forwards it as `event.detail` on `row-clicked`, so a double-click can mean something. `stage.setPanelVisible(id, v)` (or `visible:` on `addPanel`) hides a panel — not drawn, picked or focused — and `getLayout()` / `applyLayout()` carry `visible` with the position.
 - Try it: `npm run dev` → `/stage3d.html` (and `/surface3d.html` for a single plane, `/stage3d-overlay.html` for overlay mode).
-
-| `perspective` | `number` | `1400` | CSS perspective distance (px) — higher = subtler vanishing point |
-| `scanlines` | `boolean` | `true` | Overlay repeating scanline gradient |
-| `glow` | `boolean` | `true` | Apply `text-shadow` phosphor glow to cell text |
 
 ---
 

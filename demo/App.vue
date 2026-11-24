@@ -9,6 +9,7 @@ import CathodeContainer from '../src/CathodeContainer.vue'
 import CathodeLoader    from '../src/CathodeLoader.vue'
 import CathodeCandleGrid from '../src/CathodeCandleGrid.vue'
 import CathodeGauge      from '../src/CathodeGauge.vue'
+import Workspace3D       from './Workspace3D.vue'
 import { buildDefaultLayout } from '../src/useCathodeLayout'
 import type { ColDef, GridApi } from '../src/types'
 import type { ContainerState } from '../src/useCathodeLayout'
@@ -17,8 +18,9 @@ import type { OHLCVCandle, PriceOverlay, TradeMarker } from '../src/CanvasCandle
 import type { GaugeItem } from '../src/CanvasGauge'
 
 // ── Shared state ──────────────────────────────────────────────────────────────
-type DemoTab = 'grid' | 'workspace' | 'log' | 'candle' | 'wall' | 'terminal' | 'gauge'
-const activeTab = ref<DemoTab>('workspace')
+type DemoTab = 'grid' | 'workspace' | 'stage3d' | 'log' | 'candle' | 'wall' | 'terminal' | 'gauge'
+// the 3D workspace (zoom in / out, day theme) is the front door; ?tab=<name> opens any other
+const activeTab = ref<DemoTab>(((): DemoTab => { const t = new URLSearchParams(location.search).get('tab'); return (['grid', 'workspace', 'stage3d', 'log', 'candle', 'wall', 'terminal', 'gauge'].includes(t ?? '') ? t : 'stage3d') as DemoTab })())
 
 type Theme = 'none' | 'phosphor' | 'amber' | 'paper'
 const theme    = ref<Theme>('none')
@@ -222,6 +224,10 @@ const flat            = ref(false)
 const compact         = ref(false)
 
 watch(activeTab,  (tab) => { if (tab === 'grid') gridKey.value++ })
+// the 3D Workspace is a DAY (paper) scene by default and its Day / Night buttons re-dress the page chrome with it; leaving the tab puts the theme back
+let themeBeforeStage: Theme | null = null
+function onStageMode(m: 'day' | 'night') { if (themeBeforeStage === null) themeBeforeStage = theme.value; theme.value = m === 'day' ? 'paper' : 'none' }
+watch(activeTab, (tab, prev) => { if (prev === 'stage3d' && tab !== 'stage3d' && themeBeforeStage !== null) { theme.value = themeBeforeStage; themeBeforeStage = null } })
 // NOTE: do NOT bump gridKey on curvature change. It used to work as a brute-
 // force way to apply the new curvature to the grid, but at slider-drag
 // rate (60+ Hz) it forces continuous unmount/remount of CathodeGrid →
@@ -712,6 +718,9 @@ seedLogEntries()
 
       <!-- Tab switcher -->
       <div class="demo-tabs">
+        <button :class="['tab-btn', { active: activeTab === 'stage3d' }]" @click="activeTab = 'stage3d'">
+          3D Workspace
+        </button>
         <button
           v-if="!isMobile"
           :class="['tab-btn', { active: activeTab === 'workspace' }]"
@@ -748,7 +757,8 @@ seedLogEntries()
         <option value="paper">Paper (light)</option>
       </select>
 
-      <!-- Shared controls (both tabs) -->
+      <!-- Shared controls (every tab but the 3D Workspace, which has its own bar) -->
+      <template v-if="activeTab !== 'stage3d'">
       <label>Curve {{ curvature }} · {{ curvature < 0 ? 'concave' : curvature > 0 ? 'convex' : 'flat' }}</label>
       <input type="range" min="-45" max="45" step="1" v-model.number="curvature" style="width:110px" />
       <label><input type="checkbox" v-model="bendField" data-testid="cf-bendfield" /> Field</label>
@@ -762,6 +772,7 @@ seedLogEntries()
         <input type="checkbox" v-model="showLoaders" data-testid="cf-show-loaders" />
         Show loaders
       </label>
+      </template>
       <div v-if="activeTab === 'gauge'" class="demo-btns">
         <button data-testid="cf-tilt" @click="tiltGauge">Tilt</button>
       </div>
@@ -923,6 +934,9 @@ seedLogEntries()
         @submit="onTerminalSubmit"
       />
     </div>
+
+    <!-- ── 3D Workspace tab: the stage — zoom in / out, day theme (mounted only while open: it owns a WebGL context) ───────── -->
+    <div v-if="activeTab === 'stage3d'" class="stage-tab"><Workspace3D @mode="onStageMode" /></div>
 
     <!-- ── Workspace tab ─────────────────────────────────────────── -->
     <CathodeWorkspace
@@ -1180,6 +1194,7 @@ select, input[type="range"] {
        physical face of a CRT without painting a literal frame
    Workspace tab opts out (it renders outside .tab-content) so
    multi-panel layouts keep their CathodeContainer chrome. ─────── */
+.stage-tab { position: relative; flex: 1; min-height: 0; margin: 12px; border-radius: 10px; overflow: hidden; box-shadow: 0 8px 28px rgba(20, 30, 50, 0.22), inset 0 0 0 1px rgba(80, 100, 130, 0.25); }
 .tab-content {
   position: relative;
   flex: 1;
