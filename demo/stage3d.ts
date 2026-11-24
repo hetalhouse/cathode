@@ -1,6 +1,6 @@
 /**
  * CathodeStage3D demo: a sortable, selectable, scrollable grid and a gauge in ONE three.js scene.
- * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion · ?log=1 adds a log panel · ?candle=1 adds a candle chart · ?wall=1 adds a wall of mini charts.
+ * Query: ?curv=<-45..45> bend for both panels · ?static=1 stops the gauge's idle motion · ?log=1 adds a log panel · ?candle=1 adds a candle chart · ?wall=1 adds a wall of mini charts · ?info=1 gives the Net-tilt panel an ⓘ control · ?bar=cockpit wears the cockpit title bars (status dot, small tracked UPPERCASE title) with a themed palette.
  * Right-click a panel for its Display menu (in the scene).  Double-click a title bar to fly the camera to face that panel;  the – / □ buttons minimise and maximise; drag a panel's bottom-right corner to resize it.
  */
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
@@ -102,6 +102,8 @@ const stage = new CathodeStage3D({
   onPanelAction: (id, a) => { actionEvents.push(`${id}:${a}`); const p = stage.panels.get(id)!; p.setActions(p.actions.map((x) => ({ ...x, active: x.id === a }))) },
   // right-click a panel: the Display menu, drawn in the scene (scan lines / glow / magnify / bend); Cmd+Shift +/- bends the hovered panel
   displayMenu: true,
+  // ?bar=cockpit: the title bars the dashboard's 2D windows have, in a themed palette
+  ...(q.get('bar') === 'cockpit' ? { barStyle: 'cockpit' as const, barColors: { bg: '#12122a', bgFocused: '#16163a', line: '#1e2a3a', lineFocused: '#00bc8c', text: '#4a6a88', textFocused: '#8fb4d8', title: '#40a0f0', titleFocused: '#7cc4ff', box: '#1e2a3a', boxFocused: '#2a4a6a', accent: '#00bc8c', accentText: '#e8fff6' } } : {}),
   onPanelDisplay: (id, d) => { displayEvents.push({ id, ...d }) },
   // a panel was resized by its corner handle (once, on release)
   onPanelResized: (id, size) => { resizeEvents.push({ id, w: size.w, h: size.h }) },
@@ -110,6 +112,7 @@ const stage = new CathodeStage3D({
     controlEvents.push(`${id}:${control}`)
     const p = stage.panels.get(id)!
     if (control === 'minimize') stage.setPanelMinimized(id, !p.minimized)
+    else if (control !== 'maximize') { /* close / info: recorded above — what they mean is the host's call */ }
     else if (!p.maximized) {                                   // maximize: remember where the camera was, fly to fill the view
       before.set(id, stage.getCameraPose()); p.setMaximized(true)
       const pose = stage.facingPose(id, { margin: 0.03 }); if (pose) void stage.flyTo(pose)
@@ -120,7 +123,7 @@ const stage = new CathodeStage3D({
   },
 })
 stage.addPanel({ id: 'trades', title: 'Trades', content: grid,  position: [-0.78, 0, 0],    rotationY: 0.22,  look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
-stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature }, controls: ['minimize', 'maximize', 'close'], resizable: true,
+stage.addPanel({ id: 'tilt',   title: 'Net tilt', content: gauge, position: [1.0, 0.05, -0.1], rotationY: -0.3, look: { curvature }, controls: [...(q.get('info') === '1' ? ['info' as const] : []), 'minimize', 'maximize', 'close'], resizable: true,
   actions: [{ id: '5m', label: '5m' }, { id: '15m', label: '15m' }, { id: '1H', label: '1H', active: true }, { id: '1D', label: '1D' }] })
 if (log) stage.addPanel({ id: 'log', title: 'Log', content: log, position: [-0.45, -1.1, 0.1], rotationY: 0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
 if (candle) stage.addPanel({ id: 'candle', title: 'BTC-USD · 1h', content: candle, position: [0.35, -1.1, 0.1], rotationY: -0.12, look: { curvature }, controls: ['minimize', 'maximize'], resizable: true })
