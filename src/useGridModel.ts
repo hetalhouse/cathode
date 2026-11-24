@@ -1001,6 +1001,14 @@ function createModel(opts: GridModelOptions, scope: ReturnType<typeof effectScop
 
     resize() { host.resize?.() },
 
+    getSortModel() { return sortState.value.map(k => ({ colId: k.colId, sort: k.dir })) },
+    setSortModel(model) { sortState.value = model.map(k => ({ colId: k.colId, dir: k.sort })) },
+    getScrollY() { return scrollY.value },
+    setScrollY(y) {
+      // after the updates a sort / filter / data change queues (they reset the scroll to the top), and clamped to what the rows allow by then
+      void nextTick(() => { scrollY.value = Math.max(0, Math.min(maxScrollY.value, y)) })
+    },
+
     resetColumnState() {
       hiddenCols.clear()
       for (const def of opts.columnDefs()) {
