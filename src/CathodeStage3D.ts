@@ -87,6 +87,9 @@ export interface CathodeStage3DOptions {
    * the hovered panel. `true` or `{ colors }` (the menu's palette). The stage applies each change to the panel at once; `onPanelDisplay` lets the host persist it.
    */
   displayMenu?: boolean | { colors?: Partial<MenuColors> }
+  /** the title bars' palette (default: the green-on-black bar) and style; both can be changed live (setBarColors / setBarStyle) */
+  barColors?: Partial<BarColors>
+  barStyle?: BarStyle
   /** a panel's display (bend / scan lines / glow / magnify) was changed through the menu or the bend shortcut: the full new state */
   onPanelDisplay?: (id: string, display: PanelDisplay) => void
   /** a panel was resized by dragging its corner (once, on release): its new size in logical px and its new centre (the top-left corner stays put) */
@@ -94,7 +97,24 @@ export interface CathodeStage3DOptions {
 }
 
 /** a title-bar control: the stage draws it, hit-tests it and reports clicks (onPanelControl) */
-export type PanelControl = 'minimize' | 'maximize' | 'close'
+export type PanelControl = 'minimize' | 'maximize' | 'close' | 'info'
+
+/**
+ * The title bar's palette (the stage's bars all wear it; `setBarColors` re-themes them live). The defaults are the original green-on-black bar.
+ * `bg` / `bgFocused`: the bar's fill (resting / the focused panel's) · `line` / `lineFocused`: its 2px bottom rule · `text` / `textFocused`: the title and the control strokes ·
+ * `box` / `boxFocused`: an action button's outline · `accent`: the hover / active fills and the status dot · `accentText`: an active action's label ·
+ * `title` / `titleFocused`: the title text in the cockpit style (default: the same as `text` / `textFocused`).
+ */
+export interface BarColors {
+  bg: string; bgFocused: string; line: string; lineFocused: string; text: string; textFocused: string
+  box: string; boxFocused: string; accent: string; accentText: string; title?: string; titleFocused?: string
+}
+export const DEFAULT_BAR_COLORS: BarColors = {
+  bg: '#08130e', bgFocused: '#0f2a1d', line: '#2f6b4c', lineFocused: '#6ee7a7', text: '#6fae8f', textFocused: '#b6f5d2',
+  box: '#2f6b4c', boxFocused: '#3f8f6b', accent: '#6ee7a7', accentText: '#d5fbe6',
+}
+/** `plain` (default): the title as written, in 12px mono. `cockpit`: what the 2D windows' title bars look like — a status dot, then a small, bold, tracked UPPERCASE title. */
+export type BarStyle = 'plain' | 'cockpit'
 
 /**
  * A title-bar ACTION: a small text button (a range picker's "1H", a tab) drawn left of the controls, with an `active` state. The stage hit-tests it
@@ -428,16 +448,31 @@ export class Panel3D {
     const ctx = c.getContext('2d')!
     ctx.setTransform(d, 0, 0, d, 0, 0)
     const focused = this.stage.focusedId === this.id
-    ctx.fillStyle = focused ? '#0f2a1d' : '#08130e'
+    const bc = this.stage.barColors, cockpit = this.stage.barStyle === 'cockpit'
+    ctx.fillStyle = focused ? bc.bgFocused : bc.bg
     ctx.fillRect(0, 0, W, H)
-    ctx.fillStyle = focused ? '#6ee7a7' : '#2f6b4c'
+    ctx.fillStyle = focused ? bc.lineFocused : bc.line
     ctx.fillRect(0, H - 2, W, 2)
-    ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
     ctx.textBaseline = 'middle'
-    ctx.fillStyle = focused ? '#b6f5d2' : '#6fae8f'
+    // (the plain title's font is set BEFORE actionRects(), which measures in the 11px action font on this same context — so a plain title beside actions has always been drawn in 11px;
+    // kept as is: the default bar is pinned pixel-for-pixel)
+    ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
     const ar = this.actionRects()
-    const room = ar.length ? ar[0].x - 18 : (this.controls.length ? W - 10 - (BAR_PAD + this.controls.length * (BTN_W + BTN_GAP)) : W - 20)
-    ctx.fillText(this._title, 10, H / 2 - 1, Math.max(20, room))   // a long title squeezes to fit instead of running off the bar / under the controls
+    // the cockpit title starts after a status dot (5px + 8px gap, as in the 2D title bar)
+    const x0 = cockpit ? 23 : 10
+    const room = ar.length ? ar[0].x - 8 - x0 : (this.controls.length ? W - 10 - (BAR_PAD + this.controls.length * (BTN_W + BTN_GAP)) - (x0 - 10) : W - 10 - x0)
+    if (cockpit) {
+      ctx.save(); ctx.fillStyle = bc.accent; ctx.shadowColor = bc.accent; ctx.shadowBlur = 4
+      ctx.beginPath(); ctx.arc(12.5, H / 2 - 1, 2.5, 0, Math.PI * 2); ctx.fill(); ctx.restore()
+      ctx.font = 'bold 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+      ;(ctx as unknown as { letterSpacing: string }).letterSpacing = '1.26px'
+      ctx.fillStyle = (focused ? bc.titleFocused : bc.title) ?? (focused ? bc.textFocused : bc.text)
+      ctx.fillText(this._title.toUpperCase(), x0, H / 2 - 1, Math.max(20, room))
+      ;(ctx as unknown as { letterSpacing: string }).letterSpacing = '0px'
+    } else {
+      ctx.fillStyle = focused ? bc.textFocused : bc.text
+      ctx.fillText(this._title, x0, H / 2 - 1, Math.max(20, room))   // a long title squeezes to fit instead of running off the bar / under the controls
+    }
     this.drawActions(ctx, focused, ar)
     this.drawControls(ctx, focused)
     this.barTexture.needsUpdate = true
@@ -445,29 +480,46 @@ export class Panel3D {
 
   /** the title-bar action buttons: a small box with the label; the active one is filled */
   private drawActions(ctx: CanvasRenderingContext2D, focused: boolean, rects: { id: string; x: number; y: number; w: number; h: number }[]) {
+    const bc = this.stage.barColors
     ctx.font = ACTION_FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
     this._actions.forEach((a, i) => {
       const r = rects[i]
-      if (a.active) { ctx.fillStyle = 'rgba(110,231,167,0.28)'; ctx.fillRect(r.x, r.y, r.w, r.h) }
-      else if (this.hoverAction === a.id) { ctx.fillStyle = 'rgba(110,231,167,0.14)'; ctx.fillRect(r.x, r.y, r.w, r.h) }
-      ctx.strokeStyle = a.active ? '#6ee7a7' : (focused ? '#3f8f6b' : '#2f6b4c'); ctx.lineWidth = 1
+      if (a.active) this.fillAlpha(ctx, bc.accent, 0.28, r)
+      else if (this.hoverAction === a.id) this.fillAlpha(ctx, bc.accent, 0.14, r)
+      ctx.strokeStyle = a.active ? bc.accent : (focused ? bc.boxFocused : bc.box); ctx.lineWidth = 1
       ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1)
-      ctx.fillStyle = a.active ? '#d5fbe6' : (focused ? '#b6f5d2' : '#6fae8f')
+      ctx.fillStyle = a.active ? bc.accentText : (focused ? bc.textFocused : bc.text)
       ctx.fillText(a.label, r.x + r.w / 2, r.y + r.h / 2 + 0.5)
     })
     ctx.textAlign = 'left'
   }
 
+  /** fill a rect with `color` at `alpha` (any CSS colour — a themed accent is not necessarily a hex) */
+  private fillAlpha(ctx: CanvasRenderingContext2D, color: string, alpha: number, r: { x: number; y: number; w: number; h: number }) {
+    const m = /^#([0-9a-f]{6})$/i.exec(color)
+    if (m) {   // a hex colour becomes the same rgba() the bar always used (a globalAlpha fill rounds a unit differently — the default bar is pinned pixel-for-pixel)
+      const n = parseInt(m[1], 16)
+      ctx.fillStyle = `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
+      ctx.fillRect(r.x, r.y, r.w, r.h)
+      return
+    }
+    ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.restore()
+  }
+
   /** the title-bar controls: strokes, not font glyphs (a glyph can fall back to a font that does not have it) */
   private drawControls(ctx: CanvasRenderingContext2D, focused: boolean) {
+    const bc = this.stage.barColors
     for (const c of this.controls) {
       const r = this.controlRect(c)!
-      if (this.hoverControl === c) { ctx.fillStyle = 'rgba(110,231,167,0.20)'; ctx.fillRect(r.x, r.y, r.w, r.h) }
-      ctx.strokeStyle = focused ? '#b6f5d2' : '#6fae8f'
+      if (this.hoverControl === c) this.fillAlpha(ctx, bc.accent, 0.20, r)
+      ctx.strokeStyle = focused ? bc.textFocused : bc.text
       ctx.lineWidth = 1.4
       const cx = r.x + r.w / 2, cy = r.y + r.h / 2
       ctx.beginPath()
-      if (c === 'close') {
+      if (c === 'info') {
+        ctx.arc(cx, cy, 6, 0, Math.PI * 2)                                                                                    // info: ⓘ
+        ctx.moveTo(cx, cy - 0.5); ctx.lineTo(cx, cy + 3); ctx.moveTo(cx, cy - 3.2); ctx.lineTo(cx, cy - 2.6)
+      } else if (c === 'close') {
         ctx.moveTo(cx - 4, cy - 4); ctx.lineTo(cx + 4, cy + 4); ctx.moveTo(cx + 4, cy - 4); ctx.lineTo(cx - 4, cy + 4)               // close: ✕
       } else if (c === 'minimize') {
         if (this._minimized) { ctx.moveTo(cx - 5, cy); ctx.lineTo(cx + 5, cy); ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy + 5) }   // expand: +
@@ -499,6 +551,9 @@ export class CathodeStage3D {
   readonly panels = new Map<string, Panel3D>()
   readonly pxPerUnit: number
   focusedId: string | null = null
+  /** the title bars' palette and style (setBarColors / setBarStyle change them live) */
+  barColors: BarColors = { ...DEFAULT_BAR_COLORS }
+  barStyle: BarStyle = 'plain'
 
   private controls: StageControls | null = null
   private ray = new THREE.Raycaster()
@@ -559,6 +614,8 @@ export class CathodeStage3D {
     this.on(it, 'wheel', (e) => this.onWheel(e as WheelEvent), { capture: true, passive: false })
     this.on(this.passThrough ? window : this.canvas, 'keydown', (e) => this.onKey(e as KeyboardEvent))
 
+    if (o.barColors) this.barColors = { ...DEFAULT_BAR_COLORS, ...o.barColors }
+    if (o.barStyle) this.barStyle = o.barStyle
     if (o.displayMenu) {
       this.menu = new DisplayMenu3D(this.pxPerUnit, typeof o.displayMenu === 'object' ? o.displayMenu.colors : {})
       this.on(it, 'contextmenu', (e) => this.onContextMenu(e as MouseEvent), { capture: true })
@@ -1081,6 +1138,21 @@ export class CathodeStage3D {
     const p = this.panels.get(id)
     if (!this.menu || !p) return
     this.menu.open(p, x, y, p.display)
+    this.invalidate()
+  }
+  /** re-theme the in-scene Display menu (a host whose theme changed); an open menu repaints at once */
+  setMenuColors(c: Partial<MenuColors>) { this.menu?.setColors(c); this.invalidate() }
+  /** re-theme every title bar (merged over the current palette) */
+  setBarColors(c: Partial<BarColors>) {
+    this.barColors = { ...this.barColors, ...c }
+    for (const p of this.panels.values()) p.invalidateBar()
+    this.invalidate()
+  }
+  /** switch every title bar between the plain style and the cockpit style */
+  setBarStyle(style: BarStyle) {
+    if (this.barStyle === style) return
+    this.barStyle = style
+    for (const p of this.panels.values()) p.invalidateBar()
     this.invalidate()
   }
   closeDisplayMenu() { if (this.menu?.isOpen) { this.menu.close(); this.invalidate() } }
