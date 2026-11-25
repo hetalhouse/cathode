@@ -23,7 +23,8 @@ type DemoTab = 'grid' | 'workspace' | 'stage3d' | 'log' | 'candle' | 'wall' | 't
 const activeTab = ref<DemoTab>(((): DemoTab => { const t = new URLSearchParams(location.search).get('tab'); return (['grid', 'workspace', 'stage3d', 'log', 'candle', 'wall', 'terminal', 'gauge'].includes(t ?? '') ? t : 'stage3d') as DemoTab })())
 
 type Theme = 'none' | 'phosphor' | 'amber' | 'paper'
-const theme    = ref<Theme>('none')
+// the 3D Workspace (the front door) is a DAY scene to start with: its look follows this drop-down like every other tab's
+const theme    = ref<Theme>(activeTab.value === 'stage3d' ? 'paper' : 'none')
 const isDark   = computed(() => theme.value !== 'paper')
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
@@ -224,10 +225,6 @@ const flat            = ref(false)
 const compact         = ref(false)
 
 watch(activeTab,  (tab) => { if (tab === 'grid') gridKey.value++ })
-// the 3D Workspace is a DAY (paper) scene by default and its Day / Night buttons re-dress the page chrome with it; leaving the tab puts the theme back
-let themeBeforeStage: Theme | null = null
-function onStageMode(m: 'day' | 'night') { if (themeBeforeStage === null) themeBeforeStage = theme.value; theme.value = m === 'day' ? 'paper' : 'none' }
-watch(activeTab, (tab, prev) => { if (prev === 'stage3d' && tab !== 'stage3d' && themeBeforeStage !== null) { theme.value = themeBeforeStage; themeBeforeStage = null } })
 // NOTE: do NOT bump gridKey on curvature change. It used to work as a brute-
 // force way to apply the new curvature to the grid, but at slider-drag
 // rate (60+ Hz) it forces continuous unmount/remount of CathodeGrid →
@@ -936,7 +933,7 @@ seedLogEntries()
     </div>
 
     <!-- ── 3D Workspace tab: the stage — zoom in / out, day theme (mounted only while open: it owns a WebGL context) ───────── -->
-    <div v-if="activeTab === 'stage3d'" class="stage-tab"><Workspace3D @mode="onStageMode" /></div>
+    <div v-if="activeTab === 'stage3d'" class="stage-tab"><Workspace3D :theme="theme" /></div>
 
     <!-- ── Workspace tab ─────────────────────────────────────────── -->
     <CathodeWorkspace

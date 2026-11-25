@@ -392,7 +392,7 @@ test.describe('CathodeCandle', () => {
 
   test('paper theme produces visibly different output than dark theme (no blank, no errors)', async ({ page }) => {
     const watch = collectConsoleErrors(page);
-    await page.goto('/');
+    await page.goto('/?tab=candle');   // (a non-3D tab starts in the dark default theme; the 3D Workspace tab, the demo's front door, starts in Paper)
     await page.getByRole('button', { name: /^Candle$/ }).click();
     const canvas = page.locator('.tab-content:visible canvas').first();
     await canvas.waitFor({ state: 'visible' });
