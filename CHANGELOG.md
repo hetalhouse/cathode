@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.22.0 — 2026-11-25
+
+**Zoom the whole workspace out — and a 3D workspace to show it off.** Additive: nothing existing changes.
+
+- **`stage.framePose(ids?, { margin?, minDistance? })`** — the camera pose that frames *several* panels at once (every title bar included), looking along their average facing:
+  `await stage.flyTo(stage.framePose(), 800)` zooms out until everything is in view, wherever the panels were dragged. `ids` frames a subset; `minDistance` stops an Overview from ever being a
+  zoom *in*. Pure, like `facingPose` — it moves nothing. `facingPose(id)` = zoom in on one panel; `framePose()` = zoom out to all of them.
+- **The demo opens on a "3D Workspace" tab** (`?tab=<name>` opens any other): five live panels — a grid, a candle chart, a gauge, a wall of mini charts, a log — in one three.js scene, in the
+  day (paper) theme, with scroll-to-zoom, **Overview**, **Recenter**, a □ that expands a panel (and back), a captioned **▶ Tour**, and a ☀ Day / ☾ Night switch that re-dresses the scene live.
+- **`examples/threejs-workspace.html`** — a standalone three.js example: one HTML file, an import map, no build step.
+- **README**: a new top section with screenshots and a zoom GIF (`npm run capture:workspace` reproduces them); the 3D section no longer splits the Props table.
+
+New members: `CathodeStage3D.framePose`.
+
 ## 0.21.0 — 2026-11-24
 
 **Grid view state in `GridApi`.** A host that shows one grid in two places — the dashboard's 2D window and its 3D stage panel — can now carry the grid's whole view between them. Filter and
