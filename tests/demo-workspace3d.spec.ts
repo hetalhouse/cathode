@@ -95,7 +95,7 @@ test.describe('demo: the 3D Workspace tab', () => {
     await expect(page.getByRole('button', { name: '▶ Tour' })).toBeVisible();
   });
 
-  test('the Theme drop-down re-dresses the scene live — panels, title bars, Display menu, backdrop, floor — keeping the camera; leaving the tab keeps the theme; ⓘ explains a panel', async ({ page }) => {
+  test('the Theme drop-down re-dresses the scene live — panels, title bars, Display menu, backdrop, floor — keeping the camera; leaving the tab keeps the theme; ⓘ opens a pop-up', async ({ page }) => {
     await open(page);
     await page.evaluate(() => { const w = (window as any).__ws3d; return w.stage.flyTo(w.stage.facingPose('trades', { margin: 0.2 }), 0); });   // zoom in a little so there is a camera pose to keep
     await page.waitForTimeout(300);
@@ -128,7 +128,7 @@ test.describe('demo: the 3D Workspace tab', () => {
     await page.waitForTimeout(300);
     const i = await page.evaluate(() => (window as any).__ws3d.stage.clientPointForControl('wall', 'info'));
     await page.mouse.click(i.x, i.y);
-    await expect(page.locator('.ws3d-caption')).toContainText('mini charts');
+    await expect.poll(() => page.evaluate(() => (window as any).__ws3d.stage.panels.has('about-wall'))).toBe(true);   // ⓘ opens a POP-UP in the wall (see stage-popup.spec.ts for where it lands and how the view comes back)
     // another tab and back: the theme is whatever the drop-down says (the tab does not fight it)
     await sel.selectOption('amber');
     await page.getByRole('button', { name: 'GRID' }).click();
