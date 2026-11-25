@@ -85,7 +85,6 @@ const TOTAL_W = 1540, TOTAL_H = 370 + 320 + BAR
 let stage: CathodeStage3D | null = null
 let tiltTimer: ReturnType<typeof setInterval> | null = null
 let gaugeRef: ReturnType<typeof gaugeContent> | null = null
-const before = new Map<string, StageCameraPose>()
 let tourToken = 0
 
 let floor: THREE.Mesh | null = null
@@ -129,16 +128,10 @@ function build(keepPose: StageCameraPose | null) {
     onPanelActivate: (id) => { const p = stage!.facingPose(id, { margin: 0.04 }); if (p) void stage!.flyTo(p, 650) },
     onPanelControl: (id, control) => {
       const p = stage!.panels.get(id)!
-      if (control === 'info') { say(INFO[id as PanelId] ?? '', 5000); return }
+      if (control === 'info') { openAbout(id as PanelId); return }                                  // ⓘ: a POP-UP joins the wall in free space, and the camera zooms to it
       if (control === 'minimize') { stage!.setPanelMinimized(id, !p.minimized); return }
-      if (control !== 'maximize') return
-      if (!p.maximized) {                                       // EXPAND: remember where the camera was, then fly in until the panel fills the view
-        before.set(id, stage!.getCameraPose()); p.setMaximized(true)
-        const pose = stage!.facingPose(id, { margin: 0.03 }); if (pose) void stage!.flyTo(pose, 700)
-      } else {                                                  // restore: fly back out to where we were
-        p.setMaximized(false)
-        const pose = before.get(id); if (pose) void stage!.flyTo(pose, 700)
-      }
+      if (control === 'close') { void stage!.closePanel(id); return }                              // ✕: it goes, and the view you had comes back
+      void stage!.toggleExpand(id)                                                                 // □: expand (fly in to fill the view) — or, when expanded, restore the view from before
     },
   })
   const panelLook = { curvature: L.panel.curvature, scanlines: L.panel.scanlines, vignette: false }
@@ -169,22 +162,30 @@ function build(keepPose: StageCameraPose | null) {
   const start = keepPose ?? homePose()
   if (start) stage.setCameraPose(start)
   tiltTimer = setInterval(() => { const v = Math.round(Math.sin(Date.now() / 4000) * 90) / 100; gaugeRef?.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) }, 2500)   // (rounded: the read-out prints the value as given)
-  ;(window as unknown as Record<string, unknown>).__ws3d = { stage, overview, recenter, tour, stopTour, get floor() { return floor }, theme: () => props.theme, layout: LAYOUT, setCaption: (t: string) => { caption.value = t },
+  ;(window as unknown as Record<string, unknown>).__ws3d = { stage, overview, recenter, tour, stopTour, openAbout, get floor() { return floor }, theme: () => props.theme, layout: LAYOUT, setCaption: (t: string) => { caption.value = t },
     setTilt: (v: number) => { if (tiltTimer) clearInterval(tiltTimer); tiltTimer = null; gaugeRef?.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) } }   // (tests + tools/capture-workspace.mjs drive the scene through it)
 }
 
-function teardown() { if (tiltTimer) clearInterval(tiltTimer); tiltTimer = null; if (floor) { floor.geometry.dispose(); (floor.material as THREE.Material).dispose() } floor = null; stage?.dispose(); stage = null; gaugeRef = null; before.clear() }
+function teardown() { if (tiltTimer) clearInterval(tiltTimer); tiltTimer = null; if (floor) { floor.geometry.dispose(); (floor.material as THREE.Material).dispose() } floor = null; stage?.dispose(); stage = null; gaugeRef = null }
 
-// ⓘ on a panel: what it is, as the caption
-const INFO: Record<PanelId, string> = {
-  trades: 'A sortable, filterable canvas grid — click a header to sort, the funnel to filter',
-  candle: 'A three.js candlestick chart — wheel to zoom the series, drag to pan, hover for the crosshair',
-  tilt: 'A bipolar gauge — the needle eases to each new reading',
-  wall: 'A wall of mini charts drawn into ONE surface — hover a card, scroll the wall',
-  log: 'A scrolling console — follow the tail, select and copy lines',
+// ⓘ on a panel: what it is — a POP-UP that joins the wall in a free spot beside it (never over another panel), then the camera zooms to it; □ on the pop-up flies back, ✕ closes it
+const INFO: Record<PanelId, string[]> = {
+  trades: ['A sortable, filterable canvas grid.', 'Click a header to sort; the funnel opens a filter you type into — there is no DOM input in 3D.', 'Rows are real data: select, copy as TSV, double-click to open.'],
+  candle: ['A three.js candlestick chart.', 'Wheel zooms the series, drag pans, hover shows the crosshair and the OHLCV strip.', 'Overlays (Bollinger band, SMA50), a live price line and trade markers.'],
+  tilt: ['A bipolar gauge.', 'The needle eases to each new reading; the figure and stance follow it.'],
+  wall: ['A wall of mini charts drawn into ONE surface.', 'Hover rings a card, a click reports it, the wheel scrolls the wall.', 'Open positions are framed, with their P&L and entry line.'],
+  log: ['A scrolling console.', 'Follows the tail until you scroll up; select and copy lines.'],
 }
-let sayTimer: ReturnType<typeof setTimeout> | null = null
-function say(text: string, ms: number) { caption.value = text; if (sayTimer) clearTimeout(sayTimer); sayTimer = setTimeout(() => { if (!touring.value) caption.value = '' }, ms) }
+function openAbout(id: PanelId) {
+  if (!stage) return
+  const pid = `about-${id}`
+  if (stage.panels.has(pid)) { void stage.expand(pid); return }          // already open: just fly to it
+  const L = look()
+  const entries: LogEntry[] = INFO[id].map((text) => ({ text, level: 'info' as const }))
+  const content = logContent({ width: 520, height: 220, entries, theme: props.theme, showTimestamps: false })
+  content.model.setScroll(0)
+  stage.addPopup({ id: pid, title: `About — ${LAYOUT[id].title}`, content, look: { curvature: L.panel.curvature, scanlines: L.panel.scanlines, vignette: false }, glow: L.panel.glow, resizable: true }, { near: id })
+}
 
 // ── the zoom controls
 /** the Overview pose: every panel in frame, sitting a little high in the view so the floor grid shows beneath the workspace */
@@ -197,7 +198,7 @@ function homePose(): StageCameraPose | null {
 /** zoom the whole workspace OUT until every panel is in frame */
 function overview() { const p = homePose(); if (p) void stage!.flyTo(p, 800) }
 /** back to the start: the overview, level and centred */
-function recenter() { for (const [id] of before) stage?.panels.get(id)?.setMaximized(false); before.clear(); overview() }
+function recenter() { if (stage?.expandedId) void stage.unexpand(); else overview() }
 /** zoom IN on one panel until it fills the view */
 async function zoomTo(id: PanelId, ms = 800) { const p = stage?.facingPose(id, { margin: 0.05 }); if (p) await stage!.flyTo(p, ms) }
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -236,7 +237,7 @@ onBeforeUnmount(() => { tourToken++; teardown(); delete (window as unknown as Re
       <button class="ws3d-btn" :class="{ on: touring }" title="Play a short zoom-in / zoom-out tour" @click="tour">{{ touring ? '■ Stop' : '▶ Tour' }}</button>
     </div>
     <div v-if="caption" class="ws3d-caption" role="status">{{ caption }}</div>
-    <div class="ws3d-hint">scroll to <b>zoom</b> · drag to <b>orbit</b> · <b>□</b> expands a panel · double-click a title bar to face it · right-click a panel for its display menu · the look follows the Theme menu</div>
+    <div class="ws3d-hint">scroll to <b>zoom</b> · drag to <b>orbit</b> · <b>□</b> expands a panel (and flies back) · <b>ⓘ</b> opens a pop-up beside it · double-click a title bar to face it · right-click a panel for its display menu · the look follows the Theme menu</div>
   </div>
 </template>
 

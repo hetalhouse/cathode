@@ -737,6 +737,105 @@ export class CathodeStage3D {
     return { position: [p.x, p.y, p.z], target: [t.x, t.y, t.z] }
   }
 
+  // ── The wall: pop-ups join it, never land on it ──────────────────────────────────────────────────────────────────
+  // The panels are a WALL — upright, side by side in one plane. A pop-up (a detail view, a help panel, a chart opened from a row) must not open on top of what is already there: it takes a FREE SPOT in
+  // the same plane, then the camera zooms to it (expand); the expanded panel's restore button flies back to the view you had.
+
+  /** a panel's footprint (body + title bar) in the wall's plane, axis-aligned, in world units; a collapsed panel is only its bar */
+  private footprint(p: Panel3D): { x0: number; x1: number; y0: number; y1: number } {
+    const ppu = this.pxPerUnit, w = p.content.width / ppu, bodyH = p.content.height / ppu, bar = BAR_PX / ppu
+    const top = bodyH / 2 + bar, bottom = p.minimized ? bodyH / 2 : -bodyH / 2
+    return { x0: p.group.position.x - w / 2, x1: p.group.position.x + w / 2, y0: p.group.position.y + bottom, y1: p.group.position.y + top }
+  }
+
+  /**
+   * Where a panel of body size `size` (logical px) fits in the wall without touching any panel that is there (`gap` px clear all round, default 24): `position` is the body's centre in
+   * world units, in the wall's plane — pass it to `addPanel`. The spot is the free one NEAREST `near` (a panel id — a detail view opens beside its parent) or, without it, to the wall's centre;
+   * `prefer` (default 'right') orders the ties. Pure — it adds and moves nothing.
+   */
+  freeSpot(size: { w: number; h: number }, opts: { gap?: number; near?: string; prefer?: 'right' | 'below' | 'left' | 'above' } = {}): { position: [number, number, number] } {
+    const ppu = this.pxPerUnit, gap = (opts.gap ?? 24) / ppu
+    const W = size.w / ppu, H = (size.h + BAR_PX) / ppu
+    const rects = [...this.panels.values()].filter((p) => p.group.visible).map((p) => this.footprint(p))
+    const zs = [...this.panels.values()].map((p) => p.group.position.z)
+    const z = zs.length ? zs.reduce((a, b) => a + b, 0) / zs.length : 0
+    const place = (x0: number, y1: number): [number, number, number] => [x0 + W / 2, y1 - BAR_PX / ppu - size.h / ppu / 2, z]
+    if (!rects.length) return { position: [0, 0, 0] }
+    const bb = rects.reduce((a, r) => ({ x0: Math.min(a.x0, r.x0), x1: Math.max(a.x1, r.x1), y0: Math.min(a.y0, r.y0), y1: Math.max(a.y1, r.y1) }), { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity })
+    const anchor = opts.near ? this.panels.get(opts.near) : undefined
+    const target = anchor ? (() => { const r = this.footprint(anchor); return { x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 } })() : { x: (bb.x0 + bb.x1) / 2, y: (bb.y0 + bb.y1) / 2 }
+    // candidate top-left corners (x0, y1): flush against every panel's four sides — aligned to its start, middle and end — and around the whole wall
+    const cands: { x0: number; y1: number; rank: number }[] = []
+    const order = ['right', 'below', 'left', 'above'] as const
+    const rankOf = (side: (typeof order)[number]) => order.indexOf(opts.prefer ?? 'right') === order.indexOf(side) ? 0 : 1 + ((order.indexOf(side) - order.indexOf(opts.prefer ?? 'right') + 4) % 4) * 0.01
+    for (const r of [...rects, bb]) {
+      const xs = [r.x0, (r.x0 + r.x1) / 2 - W / 2, r.x1 - W], ys = [r.y1, (r.y0 + r.y1) / 2 + H / 2, r.y0 + H]
+      for (const y1 of ys) { cands.push({ x0: r.x1 + gap, y1, rank: rankOf('right') }); cands.push({ x0: r.x0 - gap - W, y1, rank: rankOf('left') }) }
+      for (const x0 of xs) { cands.push({ x0, y1: r.y0 - gap, rank: rankOf('below') }); cands.push({ x0, y1: r.y1 + gap + H, rank: rankOf('above') }) }
+    }
+    const clear = (c: { x0: number; y1: number }) => rects.every((r) => c.x0 + W + gap * 0.999 <= r.x0 || c.x0 >= r.x1 + gap * 0.999 || c.y1 - H - gap * 0.999 >= r.y1 || c.y1 <= r.y0 - gap * 0.999)
+    let best: { x0: number; y1: number } | null = null, bestScore = Infinity
+    for (const c of cands) {
+      if (!clear(c)) continue
+      const score = Math.hypot(c.x0 + W / 2 - target.x, c.y1 - H / 2 - target.y) + c.rank * 0.01
+      if (score < bestScore - 1e-9) { bestScore = score; best = c }
+    }
+    // (always found: the candidates around the whole wall's bounding box are clear)
+    return { position: place(best!.x0, best!.y1) }
+  }
+
+  private expandedState: { id: string; pose: StageCameraPose } | null = null
+  /** the panel that is currently expanded (the camera was flown in to fill the view with it), if any */
+  get expandedId(): string | null { return this.expandedState?.id ?? null }
+
+  /**
+   * EXPAND a panel: remember where the camera is, mark the panel expanded (its maximize control shows "restore") and fly in until it fills the view. Expanding another panel meanwhile
+   * keeps the ORIGINAL way back — `unexpand` always returns to the view you had before the first expand.
+   */
+  expand(id: string, opts: { margin?: number; ms?: number } = {}): Promise<void> {
+    const p = this.panels.get(id)
+    if (!p) return Promise.resolve()
+    if (this.expandedState) { if (this.expandedState.id !== id) this.panels.get(this.expandedState.id)?.setMaximized(false); this.expandedState.id = id }
+    else this.expandedState = { id, pose: this.getCameraPose() }
+    if (p.minimized) this.setPanelMinimized(id, false)
+    p.setMaximized(true)
+    const pose = this.facingPose(id, { margin: opts.margin ?? 0.03 })
+    return pose ? this.flyTo(pose, opts.ms ?? 650) : Promise.resolve()
+  }
+
+  /** UNEXPAND: fly back to the view the camera had before the panel was expanded, and put its maximize control back. `id` (optional) must be the expanded panel. */
+  unexpand(id?: string, opts: { ms?: number } = {}): Promise<void> {
+    const e = this.expandedState
+    if (!e || (id !== undefined && e.id !== id)) return Promise.resolve()
+    this.panels.get(e.id)?.setMaximized(false)
+    this.expandedState = null
+    return this.flyTo(e.pose, opts.ms ?? 650)
+  }
+
+  /** the maximize control's meaning, in one call: expand it, or — when it is the expanded one — unexpand it */
+  toggleExpand(id: string, opts: { margin?: number; ms?: number } = {}): Promise<void> {
+    return this.expandedState?.id === id ? this.unexpand(id, opts) : this.expand(id, opts)
+  }
+
+  /**
+   * Open a POP-UP: a panel that joins the wall in a free spot (see freeSpot — beside `near`, never over another panel), is focused, and — unless `zoom: false` — is EXPANDED at once: the camera
+   * flies to it, and its restore button flies back. `o.position` is ignored (the spot is the point).
+   */
+  addPopup(o: PanelOptions, popup: { near?: string; gap?: number; prefer?: 'right' | 'below' | 'left' | 'above'; zoom?: boolean; margin?: number; ms?: number } = {}): Panel3D {
+    const spot = this.freeSpot({ w: o.content.width, h: o.content.height }, { near: popup.near, gap: popup.gap, prefer: popup.prefer })
+    const p = this.addPanel({ ...o, position: spot.position, rotationY: 0, controls: o.controls ?? ['minimize', 'maximize', 'close'] })
+    this.setFocus(o.id)
+    if (popup.zoom !== false) void this.expand(o.id, { margin: popup.margin, ms: popup.ms })
+    return p
+  }
+
+  /** remove a panel; if it is the expanded one, fly back to the view from before the expand (a closed pop-up hands you back what you were looking at) */
+  closePanel(id: string, opts: { ms?: number } = {}): Promise<void> {
+    const back = this.unexpand(id, opts)
+    this.removePanel(id)
+    return back
+  }
+
   // ── Panels ──────────────────────────────────────────────────────────────────
 
   addPanel(o: PanelOptions): Panel3D {
@@ -753,6 +852,7 @@ export class CathodeStage3D {
   removePanel(id: string) {
     const p = this.panels.get(id)
     if (!p) return
+    if (this.expandedState?.id === id) this.expandedState = null
     if (this.focusedId === id) this.setFocus(null)
     if (this.hovered === p) this.hovered = null
     if (this.pressed === p) this.pressed = null
