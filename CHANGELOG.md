@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.23.0 — 2026-11-25
+
+**Pop-ups join the wall, never land on it.** The panels of a stage are a *wall* — upright, side by side in one plane. A pop-up (a detail view, a help panel, a chart opened from a row) now takes a
+**free spot in that plane**, and the camera zooms to it; its restore button flies back to the view you had. All additive: nothing existing changes.
+
+- **`stage.freeSpot({ w, h }, { near?, gap?, prefer? })`** — where a panel of that body size fits in the wall's plane without touching any panel that is there (`gap` px clear all round, default 24):
+  the free spot nearest `near` (a panel id — a detail view opens beside its parent) or, without it, the wall's centre. `position` is the body's centre in world units — pass it to `addPanel`. Pure.
+- **`stage.expand(id, { margin?, ms? })` / `unexpand(id?, { ms? })` / `toggleExpand(id)` / `expandedId`** — the maximize control's meaning in one place. *Expand* remembers the camera, marks the
+  panel expanded (its maximize control shows "restore") and flies in until it fills the view; *unexpand* flies back to the view from before. Expanding another panel meanwhile keeps the
+  **original** way back.
+- **`stage.addPopup(options, { near?, gap?, prefer?, zoom?, margin?, ms? })`** — add the panel in a free spot (`options.position` is ignored), focus it and — unless `zoom: false` — expand it.
+  **`stage.closePanel(id)`** removes a panel and, if it is the expanded one, flies back to the view from before.
+- **Demo:** ⓘ on a panel opens a real pop-up beside it in the wall and zooms to it; □ restores the view, ✕ closes it and restores too.
+
+New members: `CathodeStage3D.freeSpot` / `expand` / `unexpand` / `toggleExpand` / `expandedId` / `addPopup` / `closePanel`.
+
 ## 0.22.1 — 2026-11-25
 
 **Docs and demo only — no library code changes.** The published README (what the npm page shows) now matches the demo.
