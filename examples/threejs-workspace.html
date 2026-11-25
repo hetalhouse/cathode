@@ -38,6 +38,7 @@
 <div id="hint">scroll to <b>zoom</b> · drag to <b>orbit</b> · <b>□</b> expands a panel · <a href="https://github.com/hetalhouse/cathode">@hetalhouse/cathode</a> on three.js</div>
 
 <script type="module">
+import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CathodeStage3D, gridContent, candleContent, gaugeContent, logContent } from '@hetalhouse/cathode'
 
@@ -82,9 +83,24 @@ place('tilt', gauge, 'Net tilt')
 place('log', logContent({ width: 1480, height: 220, theme, entries: logEntries }), 'Monitor log')
 setInterval(() => { const v = Math.round(Math.sin(Date.now() / 4000) * 90) / 100; gauge.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) }, 2500)
 
+// ── a floor grid under the workspace (a shader: one-pixel lines at any zoom, fading with distance, lying only in FRONT of the panels so it never crosses their glass) ──────
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, side: THREE.DoubleSide, uniforms: { uColor: { value: new THREE.Color('#2f6fd0') } },
+  vertexShader: 'varying vec3 vP; void main() { vP = (modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vP, 1.0); }',
+  fragmentShader: `varying vec3 vP; uniform vec3 uColor;
+    float lines(vec2 p, float cell) { vec2 c = p / cell; vec2 g = abs(fract(c - 0.5) - 0.5) / max(fwidth(c), vec2(1e-4)); return 1.0 - min(min(g.x, g.y), 1.0); }
+    void main() { float a = max(lines(vP.xz, 0.3) * 0.55, lines(vP.xz, 1.5)) * smoothstep(20.0, 1.5, length(vP.xz)) * smoothstep(0.0, 0.4, vP.z) * 0.55; if (a < 0.004) discard; gl_FragColor = vec4(uColor, a); }`,
+}))
+floor.rotation.x = -Math.PI / 2
+floor.position.set(0, -(H / 2) / 360 - 0.12, -10)
+floor.renderOrder = -10
+stage.scene.add(floor)
+
 // ── zoom out / zoom in ──────────────────────────────────────────────────────────────────────────────────────────
-const overview = () => stage.flyTo(stage.framePose(undefined, { margin: 0.06 }), 800)       // frame EVERY panel
-stage.setCameraPose(stage.framePose(undefined, { margin: 0.06 }))                           // start from the overview
+const home = () => { const p = stage.framePose(undefined, { margin: 0.12 }), d = 0.17                  // frame EVERY panel, a little high in the view so the floor shows beneath
+  return { position: [p.position[0], p.position[1] - d, p.position[2]], target: [p.target[0], p.target[1] - d, p.target[2]] } }
+const overview = () => stage.flyTo(home(), 800)
+stage.setCameraPose(home())                                                                 // start from the overview
 document.getElementById('overview').onclick = overview
 let i = 0
 document.getElementById('next').onclick = () => stage.flyTo(stage.facingPose(['trades', 'candle', 'tilt', 'log'][i++ % 4], { margin: 0.05 }), 800)   // fly in on each panel in turn

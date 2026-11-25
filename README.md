@@ -23,7 +23,7 @@
 
 ## 3D workspace — zoom in, zoom out
 
-Every widget can hang as a panel in **one three.js scene**, and the camera becomes the interface: scroll to **zoom**, drag to **orbit**, press **□** and a panel is *expanded* — the camera flies in until it fills the view — **Overview** zooms the whole workspace back out until everything is in frame. Day (paper) or night (phosphor), re-dressed live.
+Every widget can hang as a panel in **one three.js scene**, and the camera becomes the interface: scroll to **zoom**, drag to **orbit**, press **□** and a panel is *expanded* — the camera flies in until it fills the view — **Overview** zooms the whole workspace back out until everything is in frame. Four themes from one drop-down (Default · Phosphor · Amber · Paper), re-dressed live — panels, title bars, menu, backdrop and the floor grid under the workspace.
 
 ![the 3D workspace, day theme — a grid, a candle chart, a gauge, a wall of mini charts and a log hung in one three.js scene](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-overview.png)
 
@@ -31,7 +31,7 @@ Every widget can hang as a panel in **one three.js scene**, and the camera becom
 
 ![zoomed in on the candle chart — a panel fills the screen](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-zoom.png)
 
-![the same workspace at night — phosphor panels, a green-on-black title bar, re-dressed live from the Night button](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-night.png)
+![the same workspace in the Phosphor theme — green-on-black panels and title bars, a green floor grid, re-dressed live from the Theme drop-down](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-night.png)
 
 **[▶ Open the 3D workspace](https://bradyhouse.github.io/cathode/)** — it is the demo's front door; **▶ Tour** plays the zoom for you. Stills and the sweep reproduce with `npm run capture:workspace`.
 

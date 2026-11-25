@@ -2,7 +2,7 @@
 // capture-workspace.mjs — the 3D Workspace tab (the demo's front door) as README / npm-page material:
 //   docs/workspace-3d-overview.png  the day workspace, every panel in frame
 //   docs/workspace-3d-zoom.png      zoomed in on the chart ("a panel fills the screen")
-//   docs/workspace-3d-night.png     the same scene, Night
+//   docs/workspace-3d-night.png     the same scene, Phosphor (the Theme drop-down)
 //   docs/workspace-3d-zoom.gif (+ .mp4)  a zoom-out / zoom-in sweep, camera driven frame by frame (deterministic, not real time)
 //
 // Usage: npm run capture:workspace   (orchestrates vite via tools/capture-workspace.sh)
@@ -39,11 +39,11 @@ await page.evaluate(() => window.__ws3d.setCaption("Zoom in — a panel fills th
 await snap("workspace-3d-zoom", 1800);
 await page.evaluate(() => window.__ws3d.setCaption(""));
 await setPose(await pose("frame"));
-await page.getByRole("button", { name: "☾ Night" }).click();
+await page.locator(".demo-bar select").first().selectOption("phosphor");   // the look is the page's Theme drop-down
 await page.waitForTimeout(900);
 await page.evaluate(() => window.__ws3d.setTilt(0.62));   // (switching the look rebuilds the scene — and restarts the gauge's idle swing)
 await snap("workspace-3d-night", 1800);
-await page.getByRole("button", { name: "☀ Day" }).click();
+await page.locator(".demo-bar select").first().selectOption("paper");
 await page.waitForTimeout(900);
 await page.evaluate(() => window.__ws3d.setTilt(0.62));
 
