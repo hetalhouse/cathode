@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.22.1 — 2026-11-25
+
+**Docs and demo only — no library code changes.** The published README (what the npm page shows) now matches the demo.
+
+- **README:** the 3D-workspace section's screenshots and zoom GIF are the current look — the workspace standing on a **floor grid**, its look driven by the demo's **Theme** drop-down
+  (Default · Phosphor · Amber · Paper; the Day / Night buttons are gone). Text updated to match.
+- **`examples/threejs-workspace.html`** (in the repository, not in the package): the same floor grid and a slightly raised home view.
+- **Demo:** the 3D Workspace tab follows the Theme menu and lies on a shader floor grid in front of / below the panels (never drawn across their glass).
+
+No API changes; `0.22.0` → `0.22.1` is safe to take.
+
 ## 0.22.0 — 2026-11-25
 
 **Zoom the whole workspace out — and a 3D workspace to show it off.** Additive: nothing existing changes.
