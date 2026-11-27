@@ -23,17 +23,19 @@
 
 ## 3D workspace — zoom in, zoom out
 
-Every widget can hang as a panel in **one three.js scene**, and the camera becomes the interface: scroll to **zoom**, drag to **orbit**, press **□** and a panel is *expanded* — the camera flies in until it fills the view — **Overview** zooms the whole workspace back out until everything is in frame. Four themes from one drop-down (Default · Phosphor · Amber · Paper), re-dressed live — panels, title bars, menu, backdrop and the floor grid under the workspace.
+Every widget can hang as a panel in **one three.js scene**, and the camera becomes the interface: scroll to **zoom**, drag to **orbit**, press **□** and a panel is *expanded* — the camera flies in until it fills the view, and **□ again flies back out** to the view you had — **ⓘ** opens a pop-up that joins the wall in a free spot (the camera flies to it, and back when you close it), **Overview** zooms the whole workspace out until everything is in frame, and **⟳ Rotate** sweeps the camera around the wall so its depth shows. Underneath it lies a floor grid with a **scape of live chart tiles** — like a trading dashboard's 3D scene. **▶ Tour** plays all of it. Four themes from one drop-down (Default · Phosphor · Amber · Paper), re-dressed live — panels, title bars, menu, backdrop and the floor grid under the workspace.
 
 ![the 3D workspace, day theme — a grid, a candle chart, a gauge, a wall of mini charts and a log hung in one three.js scene](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-overview.png)
 
 ![zooming out to the whole workspace, in on a panel, out again, in on the chart — the camera is the interface](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-zoom.gif)
 
+![⟳ Rotate: the camera swept to the side — the wall in depth, the live chart tiles lying on the floor in front of it](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-rotate.png)
+
 ![zoomed in on the candle chart — a panel fills the screen](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-zoom.png)
 
 ![the same workspace in the Phosphor theme — green-on-black panels and title bars, a green floor grid, re-dressed live from the Theme drop-down](https://raw.githubusercontent.com/hetalhouse/cathode/main/docs/workspace-3d-night.png)
 
-**[▶ Open the 3D workspace](https://bradyhouse.github.io/cathode/)** — it is the demo's front door; **▶ Tour** plays the zoom for you. Stills and the sweep reproduce with `npm run capture:workspace`.
+**[▶ Open the 3D workspace](https://bradyhouse.github.io/cathode/)** — it is the demo's front door; **▶ Tour** plays the fly-in, fly-out, pop-up and rotation for you. Stills and the sweep reproduce with `npm run capture:workspace`.
 
 ```ts
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
