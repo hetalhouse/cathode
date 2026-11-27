@@ -2,7 +2,7 @@
 /**
  * Workspace3D — the 3D stage as a demo tab: a workspace of live panels — a grid, a candle chart, a wall of mini charts, a gauge, a log — hung in one three.js scene above a floor grid,
  * with the camera as the interface. Scroll to zoom in and out, drag to orbit, □ to EXPAND a panel (the camera flies in to fill the view, and back), Overview to zoom the whole workspace
- * out until everything is in frame, Recenter to go home. ▶ Tour plays it for you. The look follows the demo's Theme drop-down (Default · Phosphor · Amber · Paper): the panels, the title
+ * out until everything is in frame, Recenter to go home, ⟳ Rotate to spin a full 360° round the wall (the chart tiles behind it come into view). ▶ Tour plays it for you. The look follows the demo's Theme drop-down (Default · Phosphor · Amber · Paper): the panels, the title
  * bars, the Display menu, the backdrop and the floor are all re-dressed live, keeping the camera where it is.
  */
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
@@ -97,15 +97,16 @@ let scapeTimer: ReturnType<typeof setInterval> | null = null
 function makeFloor(color: string, alpha: number, y: number) {
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    uniforms: { uColor: { value: new THREE.Color(color) }, uAlpha: { value: alpha }, uCell: { value: 0.3 }, uFar: { value: 20 } },
+    uniforms: { uColor: { value: new THREE.Color(color) }, uAlpha: { value: alpha }, uCell: { value: 0.3 }, uFar: { value: 20 }, uBack: { value: 0 } },
     vertexShader: 'varying vec3 vP; void main() { vP = (modelMatrix * vec4(position, 1.0)).xyz; gl_Position = projectionMatrix * viewMatrix * vec4(vP, 1.0); }',
     fragmentShader: `
-      varying vec3 vP; uniform vec3 uColor; uniform float uAlpha; uniform float uCell; uniform float uFar;
+      varying vec3 vP; uniform vec3 uColor; uniform float uAlpha; uniform float uCell; uniform float uFar; uniform float uBack;
       float lines(vec2 p, float cell) { vec2 c = p / cell; vec2 g = abs(fract(c - 0.5) - 0.5) / max(fwidth(c), vec2(1e-4)); return 1.0 - min(min(g.x, g.y), 1.0); }
       void main() {
         float minor = lines(vP.xz, uCell), major = lines(vP.xz, uCell * 5.0);
         float fade = smoothstep(uFar, 1.5, length(vP.xz));
-        float front = smoothstep(0.0, 0.4, vP.z);              // only IN FRONT of the panels (a ledge they hover over) — never behind their glass, where it would cross their text
+        // seen from the front, only IN FRONT of the panels (a ledge they hover over) — never behind their glass, where it would cross their text; as the camera swings round to the side / back (uBack → 1) the whole floor appears
+        float front = max(smoothstep(0.0, 0.4, vP.z), uBack);
         float a = max(minor * 0.55, major) * fade * front * uAlpha;
         if (a < 0.004) discard;
         gl_FragColor = vec4(uColor, a);
@@ -168,46 +169,86 @@ function makeScape(L: Look, floorY: number): THREE.Group {
     sp.scale.set(0.15, 0.047, 1); sp.position.set(mesh.position.x, floorY + 0.085, mesh.position.z); sp.renderOrder = -8   // (above its own tile: lifted off the floor, it reads just above the tile's far edge)
     g.add(sp)
   }
+  // … and behind the wall: three more rows, bigger, spread wider — hidden from the front (they would show through the panels' glass), they come into view as the camera swings round to the back
+  const bgeom = (scapeGeomBack = new THREE.PlaneGeometry(0.62, 0.37))
+  for (let r = 0; r < 3; r++) for (let c = 0; c < 6; c++) {
+    const idx = 12 + r * 6 + c
+    const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 154
+    const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4
+    let v = 100; const series = Array.from({ length: 36 }, (_, i) => (v *= 1 + Math.sin(i / 6 + idx) * 0.012 + (Math.random() - 0.5) * 0.014))
+    const mesh = new THREE.Mesh(bgeom, new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }))
+    mesh.rotation.x = -Math.PI / 2
+    mesh.position.set((c - 2.5) * 0.78 + (r % 2) * 0.2, floorY + 0.004, -0.8 - r * 0.62)
+    mesh.renderOrder = -9; mesh.userData.back = true; mesh.visible = false
+    g.add(mesh)
+    const t: Tile = { mesh, tex, canvas, series, open: idx % 5 === 0 }
+    tiles.push(t); drawTile(t, L)
+    const lc = document.createElement('canvas'); lc.width = 128; lc.height = 40
+    const lx = lc.getContext('2d')!; lx.font = '700 26px ui-monospace, monospace'; lx.textAlign = 'center'; lx.fillStyle = props.theme === 'paper' ? '#1d2b3d' : '#cfe3f2'; lx.fillText(TICKERS[idx % TICKERS.length], 64, 29)
+    const ltex = new THREE.CanvasTexture(lc); ltex.colorSpace = THREE.SRGBColorSpace
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: ltex, transparent: true, opacity: 0, depthWrite: false, toneMapped: false }))
+    sp.scale.set(0.17, 0.053, 1); sp.position.set(mesh.position.x, floorY + 0.09, mesh.position.z); sp.renderOrder = -8; sp.userData.back = true; sp.visible = false
+    g.add(sp)
+  }
   return g
 }
 let scapeGeom: THREE.PlaneGeometry | null = null
+let scapeGeomBack: THREE.PlaneGeometry | null = null
 function disposeScape() {
-  scapeGeom?.dispose(); scapeGeom = null
+  scapeGeom?.dispose(); scapeGeom = null; scapeGeomBack?.dispose(); scapeGeomBack = null
   if (scapeTimer) clearInterval(scapeTimer); scapeTimer = null
   if (scape) { scape.traverse((o) => { const mat = (o as THREE.Mesh).material as (THREE.Material & { map?: THREE.Texture | null }) | undefined; mat?.map?.dispose(); mat?.dispose() }); scape.removeFromParent() }
   scape = null; tiles.length = 0
 }
 
-// ── Rotate: the camera sweeps slowly around the wall (the dashboard's scene auto-rotates until you touch it) — to the side and back, so the depth shows without ever turning to the panels' backs ───────────────
-const SWEEP = 0.85                                  // radians either side of straight-on (~49°): the direction REVERSES here …
-const SWEEP_LIMIT = SWEEP + 0.2                     // … well before the hard clamp (a camera held at a clamp stops moving, fires no change, and would never turn round)
-function wireRotate(c: OrbitControls) {
-  c.autoRotateSpeed = 0.9
-  c.addEventListener('start', () => stopRotate())    // a drag / wheel is the user taking the camera: the sweep stops, like the dashboard's
-  c.addEventListener('change', () => {
-    if (!rotating.value) return
-    const az = c.getAzimuthalAngle()
-    // (OrbitControls: a POSITIVE auto-rotate speed turns the azimuth DOWN, a negative one up)
-    if (az >= SWEEP) c.autoRotateSpeed = Math.abs(c.autoRotateSpeed)
-    else if (az <= -SWEEP) c.autoRotateSpeed = -Math.abs(c.autoRotateSpeed)
-  })
+// ── Rotate: ONE click spins the camera a full 360° around the wall — the dashboard's scene turns the same way — so you see what is BEHIND it: the chart tiles and the floor that stretch away behind the wall ─────────
+const SPIN_MS = 9000
+let spinToken = 0
+let spinStart: StageCameraPose | null = null
+/** the camera pose `start` turned by `theta` about the vertical axis through the wall's centre (the origin) — looking at the same point, from further round */
+function poseAt(start: StageCameraPose, theta: number): StageCameraPose {
+  const c = Math.cos(theta), sn = Math.sin(theta)
+  const rot = (p: [number, number, number]): [number, number, number] => [p[0] * c + p[2] * sn, p[1], -p[0] * sn + p[2] * c]
+  return { position: rot(start.position), target: rot(start.target) }
 }
-function startRotate(fromTour = false) {
-  if (!orbit || !stage) return
+const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
+/** what is behind the wall shows as the camera swings away from straight-on: the floor behind it, and the tiles standing there (seen from the front they would show through the panels' glass) */
+function updateBackMix() {
+  if (!orbit || !floor || !scape) return
+  const m = smooth(0.35, 0.9, Math.abs(orbit.getAzimuthalAngle()))
+  ;(floor.material as THREE.ShaderMaterial).uniforms.uBack.value = m
+  for (const o of scape.children) if (o.userData.back) { o.visible = m > 0.01; ((o as THREE.Mesh).material as THREE.Material).opacity = m }
+}
+const takeCamera = () => cancelSpin(false)   // a press / the wheel anywhere on the scene is the user taking over: the spin stops where it is (as the dashboard's scene stops auto-rotating)
+function wireRotate(c: OrbitControls) { c.addEventListener('change', updateBackMix) }
+function listenForTakeover(el: HTMLElement) { el.addEventListener('pointerdown', takeCamera, true); el.addEventListener('wheel', takeCamera, { capture: true, passive: true }) }
+function dropTakeover(el: HTMLElement | null) { el?.removeEventListener('pointerdown', takeCamera, true); el?.removeEventListener('wheel', takeCamera, true) }
+async function spin(fromTour = false): Promise<void> {
+  if (!stage || rotating.value) return
   if (!fromTour) stopTour()
-  if (stage.expandedId) void stage.unexpand(undefined, { ms: 0 })
+  if (stage.expandedId) await stage.unexpand(undefined, { ms: 500 })
+  const start = spinStart = stage.getCameraPose()
+  const me = ++spinToken
   rotating.value = true
-  orbit.minAzimuthAngle = -SWEEP_LIMIT; orbit.maxAzimuthAngle = SWEEP_LIMIT
-  orbit.autoRotateSpeed = Math.abs(orbit.autoRotateSpeed) || 0.9
-  orbit.autoRotate = true
-  stage.invalidate()
+  const t0 = performance.now()
+  await new Promise<void>((resolve) => {
+    const step = (now: number) => {
+      if (spinToken !== me || !stage) { resolve(); return }
+      const k = Math.min(1, (now - t0) / SPIN_MS), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2   // ease in and out: it starts and ends gently
+      stage.setCameraPose(poseAt(start, e * Math.PI * 2))
+      if (k < 1) requestAnimationFrame(step); else resolve()
+    }
+    requestAnimationFrame(step)
+  })
+  if (spinToken === me && stage) { stage.setCameraPose(start); rotating.value = false; updateBackMix() }   // a full turn lands exactly where it began
 }
-function stopRotate() {
-  if (!rotating.value || !orbit) return
-  rotating.value = false
-  orbit.autoRotate = false; orbit.minAzimuthAngle = -Infinity; orbit.maxAzimuthAngle = Infinity
+/** stop a spin in progress; `back` flies the camera home to where the spin began (a Stop), otherwise it stays where it is (the user took the camera, or something else is about to move it) */
+function cancelSpin(back: boolean) {
+  if (!rotating.value) return
+  spinToken++; rotating.value = false
+  if (back && spinStart && stage) void stage.flyTo(spinStart, 700)
 }
-function toggleRotate() { if (rotating.value) stopRotate(); else startRotate() }
+function toggleRotate() { if (rotating.value) cancelSpin(true); else void spin() }
 
 function build(keepPose: StageCameraPose | null) {
   const el = host.value!
@@ -252,6 +293,7 @@ function build(keepPose: StageCameraPose | null) {
   // the floor grid, just below the lowest panel
   floor = makeFloor(L.floor, L.floorAlpha, -(TOTAL_H / 2) / ppu - 0.12)
   stage.scene.add(floor)
+  listenForTakeover(el)
   scape = makeScape(L, -(TOTAL_H / 2) / ppu - 0.12)
   stage.scene.add(scape)
   scapeTimer = setInterval(() => { for (const t of tiles) { t.series.push(t.series[t.series.length - 1] * (1 + (Math.random() - 0.48) * 0.016)); t.series.shift(); drawTile(t, L) } stage?.invalidate() }, 2600)
@@ -259,11 +301,11 @@ function build(keepPose: StageCameraPose | null) {
   const start = keepPose ?? homePose()
   if (start) stage.setCameraPose(start)
   tiltTimer = setInterval(() => { const v = Math.round(Math.sin(Date.now() / 4000) * 90) / 100; gaugeRef?.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) }, 2500)   // (rounded: the read-out prints the value as given)
-  ;(window as unknown as Record<string, unknown>).__ws3d = { stage, overview, recenter, tour, stopTour, openAbout, toggleRotate, get orbit() { return orbit }, get scape() { return scape }, get floor() { return floor }, theme: () => props.theme, layout: LAYOUT, setCaption: (t: string) => { caption.value = t },
+  ;(window as unknown as Record<string, unknown>).__ws3d = { stage, overview, recenter, tour, stopTour, openAbout, toggleRotate, spin, poseAt, rotating: () => rotating.value, get orbit() { return orbit }, get scape() { return scape }, get floor() { return floor }, theme: () => props.theme, layout: LAYOUT, setCaption: (t: string) => { caption.value = t },
     setTilt: (v: number) => { if (tiltTimer) clearInterval(tiltTimer); tiltTimer = null; gaugeRef?.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) } }   // (tests + tools/capture-workspace.mjs drive the scene through it)
 }
 
-function teardown() { if (tiltTimer) clearInterval(tiltTimer); tiltTimer = null; if (floor) { floor.geometry.dispose(); (floor.material as THREE.Material).dispose() } floor = null; disposeScape(); rotating.value = false; orbit = null; stage?.dispose(); stage = null; gaugeRef = null }
+function teardown() { if (tiltTimer) clearInterval(tiltTimer); tiltTimer = null; if (floor) { floor.geometry.dispose(); (floor.material as THREE.Material).dispose() } floor = null; disposeScape(); spinToken++; rotating.value = false; orbit = null; dropTakeover(host.value); stage?.dispose(); stage = null; gaugeRef = null }
 
 // ⓘ on a panel: what it is — a POP-UP that joins the wall in a free spot beside it (never over another panel), then the camera zooms to it; □ on the pop-up flies back, ✕ closes it
 const INFO: Record<PanelId, string[]> = {
@@ -293,9 +335,9 @@ function homePose(): StageCameraPose | null {
   return { position: [p.position[0], p.position[1] - DROP, p.position[2]], target: [p.target[0], p.target[1] - DROP, p.target[2]] }
 }
 /** zoom the whole workspace OUT until every panel is in frame */
-function overview() { stopRotate(); const p = homePose(); if (p) void stage!.flyTo(p, 800) }
+function overview() { cancelSpin(false); const p = homePose(); if (p) void stage!.flyTo(p, 800) }
 /** back to the start: the overview, level and centred */
-function recenter() { stopRotate(); if (stage?.expandedId) void stage.unexpand(); else overview() }
+function recenter() { cancelSpin(false); if (stage?.expandedId) void stage.unexpand(); else overview() }
 /** zoom IN on one panel until it fills the view */
 async function zoomTo(id: PanelId, ms = 800) { const p = stage?.facingPose(id, { margin: 0.05 }); if (p) await stage!.flyTo(p, ms) }
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -303,7 +345,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 let tourPopup: string | null = null
 async function tour() {
   if (touring.value) { stopTour(); return }
-  stopRotate()
+  cancelSpin(false)
   touring.value = true
   const me = ++tourToken
   const alive = () => tourToken === me && !!stage
@@ -316,7 +358,7 @@ async function tour() {
     { text: '… and out again', run: () => stage!.unexpand(undefined, { ms: 900 }), hold: 1100 },
     { text: 'ⓘ opens a pop-up in the wall — the camera flies to it', run: () => { tourPopup = 'about-wall'; openAbout('wall') }, hold: 2300 },
     { text: 'Close it — and the camera flies back', run: async () => { await stage!.closePanel('about-wall', { ms: 900 }); tourPopup = null }, hold: 1200 },
-    { text: 'Rotate — the camera sweeps around the wall; the charts on the floor show their depth', run: async () => { startRotate(true); await sleep(5200); stopRotate() }, hold: 200 },
+    { text: 'Rotate — a full 360° spin: the charts behind the wall come into view', run: () => spin(true), hold: 400 },
     { text: 'Back out to the overview', run: () => overview(), hold: 1500 },
   ]
   for (const s of steps) { if (!alive()) break; caption.value = s.text; await s.run(); await sleep(s.hold) }
@@ -324,7 +366,7 @@ async function tour() {
 }
 function stopTour() {
   tourToken++; touring.value = false; caption.value = ''
-  stopRotate()
+  cancelSpin(false)
   if (tourPopup && stage?.panels.has(tourPopup)) void stage.closePanel(tourPopup, { ms: 0 })   // a pop-up the tour opened does not outlive it
   tourPopup = null
   stage?.flyTo(stage.getCameraPose(), 0)              // (cancels the flight in progress)
@@ -345,11 +387,11 @@ onBeforeUnmount(() => { tourToken++; teardown(); delete (window as unknown as Re
       <span class="ws3d-title">3D workspace</span>
       <button class="ws3d-btn" title="Zoom the whole workspace out until every panel is in frame" @click="overview">Overview</button>
       <button class="ws3d-btn" title="Fly back to the start" @click="recenter">Recenter</button>
-      <button class="ws3d-btn" :class="{ on: rotating }" title="Sweep the camera slowly around the wall (a drag or the wheel takes it back) — the charts on the floor show their depth" :aria-pressed="rotating" @click="toggleRotate">⟳ Rotate</button>
+      <button class="ws3d-btn" :class="{ on: rotating }" :aria-pressed="rotating" title="Spin the camera a full 360° around the wall — see the charts behind it (a drag or the wheel takes the camera back; click again to stop)" @click="toggleRotate">{{ rotating ? '■ Spin' : '⟳ Rotate' }}</button>
       <button class="ws3d-btn" :class="{ on: touring }" title="Play a tour: zoom out, fly in on a panel and out again, a pop-up joining the wall, a sweep around it" @click="tour">{{ touring ? '■ Stop' : '▶ Tour' }}</button>
     </div>
     <div v-if="caption" class="ws3d-caption" role="status">{{ caption }}</div>
-    <div class="ws3d-hint">scroll to <b>zoom</b> · drag to <b>orbit</b> · <b>⟳</b> sweeps around the wall · <b>□</b> expands a panel (and flies back) · <b>ⓘ</b> opens a pop-up beside it · double-click a title bar to face it · right-click a panel for its display menu · the look follows the Theme menu</div>
+    <div class="ws3d-hint">scroll to <b>zoom</b> · drag to <b>orbit</b> · <b>⟳</b> spins 360° round the wall · <b>□</b> expands a panel (and flies back) · <b>ⓘ</b> opens a pop-up beside it · double-click a title bar to face it · right-click a panel for its display menu · the look follows the Theme menu</div>
   </div>
 </template>
 

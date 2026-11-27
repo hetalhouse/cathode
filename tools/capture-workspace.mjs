@@ -2,7 +2,7 @@
 // capture-workspace.mjs — the 3D Workspace tab (the demo's front door) as README / npm-page material:
 //   docs/workspace-3d-overview.png  the day workspace, every panel in frame
 //   docs/workspace-3d-zoom.png      zoomed in on the chart ("a panel fills the screen")
-//   docs/workspace-3d-rotate.png    the camera swept to the side (⟳ Rotate): the wall in depth, the chart tiles on the floor
+//   docs/workspace-3d-rotate.png    the camera most of the way round the wall (⟳ Rotate spins a full 360°): the charts that stand behind it in view
 //   docs/workspace-3d-night.png     the same scene, Phosphor (the Theme drop-down)
 //   docs/workspace-3d-zoom.gif (+ .mp4)  a zoom-out / zoom-in sweep, camera driven frame by frame (deterministic, not real time)
 //
@@ -34,10 +34,12 @@ const snap = (name, w) => shot(`${TMP}/${name}.png`).then(() => shrink(`${TMP}/$
 // ── stills ──────────────────────────────────────────────────────────────────────
 await page.evaluate(() => window.__ws3d.setCaption(""));
 await snap("workspace-3d-overview", 1800);
-// the sweep, stepped through the controls' own update() (deterministic): to ~30° off straight-on, the way a Rotate sweep gets there
-await page.evaluate(() => { const o = window.__ws3d.orbit; o.autoRotateSpeed = 6; o.minAzimuthAngle = -1.05; o.maxAzimuthAngle = 1.05; o.autoRotate = true; for (let i = 0; i < 120; i++) o.update(); o.autoRotate = false; o.minAzimuthAngle = -Infinity; o.maxAzimuthAngle = Infinity; window.__ws3d.stage.invalidate(); });
+// the camera most of the way round the wall (⟳ Rotate spins a full 360°): from behind, where the chart tiles that stand behind the wall are in view — set through the same pose maths the spin uses
+await page.evaluate(() => { const w = window.__ws3d, st = w.stage; window.__home = st.getCameraPose(); st.setCameraPose(w.poseAt(window.__home, (215 * Math.PI) / 180)); });
+await page.waitForTimeout(900);
 await snap("workspace-3d-rotate", 1800);
-await page.getByRole("button", { name: "Overview" }).click();
+await page.evaluate(() => window.__ws3d.stage.setCameraPose(window.__home));
+await page.waitForTimeout(700);
 await page.waitForTimeout(1200);
 const candle = await pose("face", "candle");
 await setPose(candle);
