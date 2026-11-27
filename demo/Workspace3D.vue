@@ -19,6 +19,7 @@ const props = defineProps<{ theme: Theme }>()
 const host = ref<HTMLDivElement | null>(null)
 const caption = ref('')
 const touring = ref(false)
+const rotating = ref(false)
 
 /** everything that changes with the theme: the title bars, the Display menu, the page behind the canvas, the floor, the panels' look, and the toolbar's colours */
 interface Look {
@@ -88,6 +89,9 @@ let gaugeRef: ReturnType<typeof gaugeContent> | null = null
 let tourToken = 0
 
 let floor: THREE.Mesh | null = null
+let orbit: OrbitControls | null = null
+let scape: THREE.Group | null = null
+let scapeTimer: ReturnType<typeof setInterval> | null = null
 
 /** a grid on the ground under the panels (the dashboard's scape has one): fine + major lines, fading out with distance — a shader, so the lines stay one pixel wide at any zoom */
 function makeFloor(color: string, alpha: number, y: number) {
@@ -115,13 +119,103 @@ function makeFloor(color: string, alpha: number, y: number) {
   return m
 }
 
+// ── the SCAPE: flat chart tiles lying on the floor in front of the wall, like the dashboard's 3D scene — each a live price line with its ticker, open positions outlined ─────────────────────────────
+const TICKERS = ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK', 'DOGE', 'ADA', 'XRP', 'AAPL', 'MSFT', 'NVDA', 'TSLA']
+interface Tile { mesh: THREE.Mesh; tex: THREE.CanvasTexture; canvas: HTMLCanvasElement; series: number[]; open: boolean }
+const tiles: Tile[] = []
+function drawTile(t: Tile, L: Look) {
+  const c = t.canvas, ctx = c.getContext('2d')!, W = c.width, H = c.height
+  const paper = props.theme === 'paper'
+  ctx.clearRect(0, 0, W, H)
+  ctx.fillStyle = paper ? 'rgba(255,255,255,0.78)' : 'rgba(8,14,24,0.74)'; ctx.fillRect(0, 0, W, H)
+  const n = t.series.length, lo = Math.min(...t.series), hi = Math.max(...t.series), span = Math.max(1e-6, hi - lo)
+  const up = t.series[n - 1] >= t.series[0]
+  const col = up ? L.up : L.down
+  // a faint grid, then the price line with a soft fill under it
+  ctx.strokeStyle = paper ? 'rgba(47,111,208,0.12)' : 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1
+  for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(0, (H * i) / 4); ctx.lineTo(W, (H * i) / 4); ctx.stroke() }
+  const X = (i: number) => 10 + ((W - 20) * i) / (n - 1), Y = (v: number) => H - 14 - ((H - 34) * (v - lo)) / span
+  ctx.beginPath(); ctx.moveTo(X(0), Y(t.series[0])); for (let i = 1; i < n; i++) ctx.lineTo(X(i), Y(t.series[i]))
+  ctx.lineTo(X(n - 1), H - 8); ctx.lineTo(X(0), H - 8); ctx.closePath(); ctx.globalAlpha = 0.16; ctx.fillStyle = col; ctx.fill(); ctx.globalAlpha = 1
+  ctx.beginPath(); ctx.moveTo(X(0), Y(t.series[0])); for (let i = 1; i < n; i++) ctx.lineTo(X(i), Y(t.series[i])); ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.stroke()
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(n - 1), Y(t.series[n - 1]), 5, 0, Math.PI * 2); ctx.fill()
+  // the frame: accent when the product is an open position
+  ctx.lineWidth = t.open ? 5 : 2; ctx.strokeStyle = t.open ? L.up : (paper ? 'rgba(47,111,208,0.45)' : 'rgba(255,255,255,0.22)'); ctx.strokeRect(2, 2, W - 4, H - 4)
+  t.tex.needsUpdate = true
+}
+/** the tiles: two rows of six, lying flat on the floor just in front of the wall (the strip of floor the Overview shows), each with a ticker label at its far edge */
+function makeScape(L: Look, floorY: number): THREE.Group {
+  const g = new THREE.Group(); g.name = 'scape'
+  const geom = (scapeGeom = new THREE.PlaneGeometry(0.5, 0.3))
+  const COLS = 6, ROWS = 2
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+    const idx = r * COLS + c
+    const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 154
+    const tex = new THREE.CanvasTexture(canvas); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4
+    let v = 100; const series = Array.from({ length: 36 }, (_, i) => (v *= 1 + Math.sin(i / 5 + idx) * 0.012 + (Math.random() - 0.5) * 0.014))
+    const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }))
+    mesh.rotation.x = -Math.PI / 2
+    mesh.position.set((c - (COLS - 1) / 2) * 0.62, floorY + 0.004, 0.2 + r * 0.42)
+    mesh.renderOrder = -9
+    g.add(mesh)
+    const t: Tile = { mesh, tex, canvas, series, open: idx % 4 === 0 }
+    tiles.push(t); drawTile(t, L)
+    // the ticker, floating just above the tile's far edge
+    const lc = document.createElement('canvas'); lc.width = 128; lc.height = 40
+    const lx = lc.getContext('2d')!; lx.font = '700 26px ui-monospace, monospace'; lx.textAlign = 'center'; lx.fillStyle = props.theme === 'paper' ? '#1d2b3d' : '#cfe3f2'; lx.fillText(TICKERS[idx % TICKERS.length], 64, 29)
+    const ltex = new THREE.CanvasTexture(lc); ltex.colorSpace = THREE.SRGBColorSpace
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: ltex, transparent: true, depthWrite: false, toneMapped: false }))
+    sp.scale.set(0.15, 0.047, 1); sp.position.set(mesh.position.x, floorY + 0.085, mesh.position.z); sp.renderOrder = -8   // (above its own tile: lifted off the floor, it reads just above the tile's far edge)
+    g.add(sp)
+  }
+  return g
+}
+let scapeGeom: THREE.PlaneGeometry | null = null
+function disposeScape() {
+  scapeGeom?.dispose(); scapeGeom = null
+  if (scapeTimer) clearInterval(scapeTimer); scapeTimer = null
+  if (scape) { scape.traverse((o) => { const mat = (o as THREE.Mesh).material as (THREE.Material & { map?: THREE.Texture | null }) | undefined; mat?.map?.dispose(); mat?.dispose() }); scape.removeFromParent() }
+  scape = null; tiles.length = 0
+}
+
+// ── Rotate: the camera sweeps slowly around the wall (the dashboard's scene auto-rotates until you touch it) — to the side and back, so the depth shows without ever turning to the panels' backs ───────────────
+const SWEEP = 0.85                                  // radians either side of straight-on (~49°): the direction REVERSES here …
+const SWEEP_LIMIT = SWEEP + 0.2                     // … well before the hard clamp (a camera held at a clamp stops moving, fires no change, and would never turn round)
+function wireRotate(c: OrbitControls) {
+  c.autoRotateSpeed = 0.9
+  c.addEventListener('start', () => stopRotate())    // a drag / wheel is the user taking the camera: the sweep stops, like the dashboard's
+  c.addEventListener('change', () => {
+    if (!rotating.value) return
+    const az = c.getAzimuthalAngle()
+    // (OrbitControls: a POSITIVE auto-rotate speed turns the azimuth DOWN, a negative one up)
+    if (az >= SWEEP) c.autoRotateSpeed = Math.abs(c.autoRotateSpeed)
+    else if (az <= -SWEEP) c.autoRotateSpeed = -Math.abs(c.autoRotateSpeed)
+  })
+}
+function startRotate(fromTour = false) {
+  if (!orbit || !stage) return
+  if (!fromTour) stopTour()
+  if (stage.expandedId) void stage.unexpand(undefined, { ms: 0 })
+  rotating.value = true
+  orbit.minAzimuthAngle = -SWEEP_LIMIT; orbit.maxAzimuthAngle = SWEEP_LIMIT
+  orbit.autoRotateSpeed = Math.abs(orbit.autoRotateSpeed) || 0.9
+  orbit.autoRotate = true
+  stage.invalidate()
+}
+function stopRotate() {
+  if (!rotating.value || !orbit) return
+  rotating.value = false
+  orbit.autoRotate = false; orbit.minAzimuthAngle = -Infinity; orbit.maxAzimuthAngle = Infinity
+}
+function toggleRotate() { if (rotating.value) stopRotate(); else startRotate() }
+
 function build(keepPose: StageCameraPose | null) {
   const el = host.value!
   const L = look()
   const theme = props.theme
   stage = new CathodeStage3D({
     container: el, transparent: true,
-    controls: (camera, dom) => { const c = new OrbitControls(camera, dom); c.enableDamping = true; c.minDistance = 0.4; c.maxDistance = 16; c.zoomSpeed = 0.9; return c as unknown as StageControls },
+    controls: (camera, dom) => { const c = new OrbitControls(camera, dom); c.enableDamping = true; c.minDistance = 0.4; c.maxDistance = 16; c.zoomSpeed = 0.9; orbit = c; wireRotate(c); return c as unknown as StageControls },
     cameraPosition: [0, 0, 6],
     displayMenu: { colors: L.menu },
     barStyle: 'cockpit', barColors: L.bars,
@@ -158,15 +252,18 @@ function build(keepPose: StageCameraPose | null) {
   // the floor grid, just below the lowest panel
   floor = makeFloor(L.floor, L.floorAlpha, -(TOTAL_H / 2) / ppu - 0.12)
   stage.scene.add(floor)
+  scape = makeScape(L, -(TOTAL_H / 2) / ppu - 0.12)
+  stage.scene.add(scape)
+  scapeTimer = setInterval(() => { for (const t of tiles) { t.series.push(t.series[t.series.length - 1] * (1 + (Math.random() - 0.48) * 0.016)); t.series.shift(); drawTile(t, L) } stage?.invalidate() }, 2600)
   // start from the Overview (or where the camera was, when the theme was just switched)
   const start = keepPose ?? homePose()
   if (start) stage.setCameraPose(start)
   tiltTimer = setInterval(() => { const v = Math.round(Math.sin(Date.now() / 4000) * 90) / 100; gaugeRef?.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) }, 2500)   // (rounded: the read-out prints the value as given)
-  ;(window as unknown as Record<string, unknown>).__ws3d = { stage, overview, recenter, tour, stopTour, openAbout, get floor() { return floor }, theme: () => props.theme, layout: LAYOUT, setCaption: (t: string) => { caption.value = t },
+  ;(window as unknown as Record<string, unknown>).__ws3d = { stage, overview, recenter, tour, stopTour, openAbout, toggleRotate, get orbit() { return orbit }, get scape() { return scape }, get floor() { return floor }, theme: () => props.theme, layout: LAYOUT, setCaption: (t: string) => { caption.value = t },
     setTilt: (v: number) => { if (tiltTimer) clearInterval(tiltTimer); tiltTimer = null; gaugeRef?.update({ value: v, stance: v >= 0 ? 'net long' : 'net short' }) } }   // (tests + tools/capture-workspace.mjs drive the scene through it)
 }
 
-function teardown() { if (tiltTimer) clearInterval(tiltTimer); tiltTimer = null; if (floor) { floor.geometry.dispose(); (floor.material as THREE.Material).dispose() } floor = null; stage?.dispose(); stage = null; gaugeRef = null }
+function teardown() { if (tiltTimer) clearInterval(tiltTimer); tiltTimer = null; if (floor) { floor.geometry.dispose(); (floor.material as THREE.Material).dispose() } floor = null; disposeScape(); rotating.value = false; orbit = null; stage?.dispose(); stage = null; gaugeRef = null }
 
 // ⓘ on a panel: what it is — a POP-UP that joins the wall in a free spot beside it (never over another panel), then the camera zooms to it; □ on the pop-up flies back, ✕ closes it
 const INFO: Record<PanelId, string[]> = {
@@ -196,29 +293,43 @@ function homePose(): StageCameraPose | null {
   return { position: [p.position[0], p.position[1] - DROP, p.position[2]], target: [p.target[0], p.target[1] - DROP, p.target[2]] }
 }
 /** zoom the whole workspace OUT until every panel is in frame */
-function overview() { const p = homePose(); if (p) void stage!.flyTo(p, 800) }
+function overview() { stopRotate(); const p = homePose(); if (p) void stage!.flyTo(p, 800) }
 /** back to the start: the overview, level and centred */
-function recenter() { if (stage?.expandedId) void stage.unexpand(); else overview() }
+function recenter() { stopRotate(); if (stage?.expandedId) void stage.unexpand(); else overview() }
 /** zoom IN on one panel until it fills the view */
 async function zoomTo(id: PanelId, ms = 800) { const p = stage?.facingPose(id, { margin: 0.05 }); if (p) await stage!.flyTo(p, ms) }
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
+let tourPopup: string | null = null
 async function tour() {
   if (touring.value) { stopTour(); return }
+  stopRotate()
   touring.value = true
   const me = ++tourToken
   const alive = () => tourToken === me && !!stage
+  // The tour shows the whole vocabulary: zoom OUT to the workspace, FLY IN on a panel (expand) and FLY OUT again (the view you had), a pop-up joining the wall with the camera flying to it and back, a sweep around the wall.
   const steps: { text: string; run: () => Promise<void> | void; hold: number }[] = [
-    { text: 'Zoom out — the whole workspace in one view', run: () => { overview() }, hold: 1600 },
-    { text: 'Zoom in — a panel fills the screen', run: () => zoomTo('trades'), hold: 1500 },
-    { text: 'Zoom out — and in again on the chart', run: async () => { overview(); await sleep(900); await zoomTo('candle') }, hold: 1700 },
-    { text: 'A wall of mini charts — one WebGL surface', run: () => zoomTo('wall'), hold: 1500 },
-    { text: 'Back out to the overview', run: () => { overview() }, hold: 1500 },
+    { text: 'Zoom out — the whole workspace in one view', run: () => overview(), hold: 1500 },
+    { text: 'Fly in — □ expands a panel until it fills the view', run: () => stage!.expand('trades', { ms: 900 }), hold: 1500 },
+    { text: 'Fly out — □ again restores the view you had', run: () => stage!.unexpand(undefined, { ms: 900 }), hold: 1300 },
+    { text: 'Fly in on the chart …', run: () => stage!.expand('candle', { ms: 900 }), hold: 1400 },
+    { text: '… and out again', run: () => stage!.unexpand(undefined, { ms: 900 }), hold: 1100 },
+    { text: 'ⓘ opens a pop-up in the wall — the camera flies to it', run: () => { tourPopup = 'about-wall'; openAbout('wall') }, hold: 2300 },
+    { text: 'Close it — and the camera flies back', run: async () => { await stage!.closePanel('about-wall', { ms: 900 }); tourPopup = null }, hold: 1200 },
+    { text: 'Rotate — the camera sweeps around the wall; the charts on the floor show their depth', run: async () => { startRotate(true); await sleep(5200); stopRotate() }, hold: 200 },
+    { text: 'Back out to the overview', run: () => overview(), hold: 1500 },
   ]
   for (const s of steps) { if (!alive()) break; caption.value = s.text; await s.run(); await sleep(s.hold) }
   if (tourToken === me) { caption.value = ''; touring.value = false }
 }
-function stopTour() { tourToken++; touring.value = false; caption.value = ''; stage?.flyTo(stage.getCameraPose(), 0) }
+function stopTour() {
+  tourToken++; touring.value = false; caption.value = ''
+  stopRotate()
+  if (tourPopup && stage?.panels.has(tourPopup)) void stage.closePanel(tourPopup, { ms: 0 })   // a pop-up the tour opened does not outlive it
+  tourPopup = null
+  stage?.flyTo(stage.getCameraPose(), 0)              // (cancels the flight in progress)
+  if (stage?.expandedId) void stage.unexpand(undefined, { ms: 600 })   // stopped mid fly-in: fly back out to the view from before
+}
 
 /** the Theme drop-down changed: rebuild the scene in the new look, keeping the camera where it is */
 watch(() => props.theme, () => { if (!stage) return; const pose = stage.getCameraPose(); stopTour(); teardown(); build(pose) })
@@ -234,10 +345,11 @@ onBeforeUnmount(() => { tourToken++; teardown(); delete (window as unknown as Re
       <span class="ws3d-title">3D workspace</span>
       <button class="ws3d-btn" title="Zoom the whole workspace out until every panel is in frame" @click="overview">Overview</button>
       <button class="ws3d-btn" title="Fly back to the start" @click="recenter">Recenter</button>
-      <button class="ws3d-btn" :class="{ on: touring }" title="Play a short zoom-in / zoom-out tour" @click="tour">{{ touring ? '■ Stop' : '▶ Tour' }}</button>
+      <button class="ws3d-btn" :class="{ on: rotating }" title="Sweep the camera slowly around the wall (a drag or the wheel takes it back) — the charts on the floor show their depth" :aria-pressed="rotating" @click="toggleRotate">⟳ Rotate</button>
+      <button class="ws3d-btn" :class="{ on: touring }" title="Play a tour: zoom out, fly in on a panel and out again, a pop-up joining the wall, a sweep around it" @click="tour">{{ touring ? '■ Stop' : '▶ Tour' }}</button>
     </div>
     <div v-if="caption" class="ws3d-caption" role="status">{{ caption }}</div>
-    <div class="ws3d-hint">scroll to <b>zoom</b> · drag to <b>orbit</b> · <b>□</b> expands a panel (and flies back) · <b>ⓘ</b> opens a pop-up beside it · double-click a title bar to face it · right-click a panel for its display menu · the look follows the Theme menu</div>
+    <div class="ws3d-hint">scroll to <b>zoom</b> · drag to <b>orbit</b> · <b>⟳</b> sweeps around the wall · <b>□</b> expands a panel (and flies back) · <b>ⓘ</b> opens a pop-up beside it · double-click a title bar to face it · right-click a panel for its display menu · the look follows the Theme menu</div>
   </div>
 </template>
 
@@ -252,5 +364,5 @@ onBeforeUnmount(() => { tourToken++; teardown(); delete (window as unknown as Re
 .ws3d-btn { font: 600 11px ui-monospace, monospace; padding: 5px 11px; border-radius: 4px; cursor: pointer; border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--btn-ink); }
 .ws3d-btn:hover, .ws3d-btn.on { color: var(--btn-hover-ink); background: var(--ink); border-color: var(--ink); }
 .ws3d-caption { position: absolute; left: 50%; bottom: 46px; transform: translateX(-50%); font: 700 14px ui-monospace, monospace; padding: 8px 16px; border-radius: 6px; pointer-events: none; white-space: nowrap; background: var(--cap-bg); color: var(--cap-ink); }
-.ws3d-hint { position: absolute; left: 12px; right: 12px; bottom: 10px; text-align: center; font: 11px ui-monospace, monospace; pointer-events: none; color: var(--hint); }
+.ws3d-hint { position: absolute; left: 50%; transform: translateX(-50%); bottom: 8px; max-width: calc(100% - 24px); text-align: center; font: 11px ui-monospace, monospace; pointer-events: none; color: var(--hint); background: var(--btn-bg); padding: 3px 12px; border-radius: 12px; }
 </style>

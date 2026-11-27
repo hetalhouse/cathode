@@ -2,6 +2,7 @@
 // capture-workspace.mjs — the 3D Workspace tab (the demo's front door) as README / npm-page material:
 //   docs/workspace-3d-overview.png  the day workspace, every panel in frame
 //   docs/workspace-3d-zoom.png      zoomed in on the chart ("a panel fills the screen")
+//   docs/workspace-3d-rotate.png    the camera swept to the side (⟳ Rotate): the wall in depth, the chart tiles on the floor
 //   docs/workspace-3d-night.png     the same scene, Phosphor (the Theme drop-down)
 //   docs/workspace-3d-zoom.gif (+ .mp4)  a zoom-out / zoom-in sweep, camera driven frame by frame (deterministic, not real time)
 //
@@ -33,6 +34,11 @@ const snap = (name, w) => shot(`${TMP}/${name}.png`).then(() => shrink(`${TMP}/$
 // ── stills ──────────────────────────────────────────────────────────────────────
 await page.evaluate(() => window.__ws3d.setCaption(""));
 await snap("workspace-3d-overview", 1800);
+// the sweep, stepped through the controls' own update() (deterministic): to ~30° off straight-on, the way a Rotate sweep gets there
+await page.evaluate(() => { const o = window.__ws3d.orbit; o.autoRotateSpeed = 6; o.minAzimuthAngle = -1.05; o.maxAzimuthAngle = 1.05; o.autoRotate = true; for (let i = 0; i < 120; i++) o.update(); o.autoRotate = false; o.minAzimuthAngle = -Infinity; o.maxAzimuthAngle = Infinity; window.__ws3d.stage.invalidate(); });
+await snap("workspace-3d-rotate", 1800);
+await page.getByRole("button", { name: "Overview" }).click();
+await page.waitForTimeout(1200);
 const candle = await pose("face", "candle");
 await setPose(candle);
 await page.evaluate(() => window.__ws3d.setCaption("Zoom in — a panel fills the screen"));

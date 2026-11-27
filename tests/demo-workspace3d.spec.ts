@@ -81,18 +81,48 @@ test.describe('demo: the 3D Workspace tab', () => {
     expect(await page.evaluate(() => (window as any).__ws3d.stage.panels.get('candle').maximized)).toBe(false);
   });
 
-  test('▶ Tour zooms in and out by itself, captioning each step, and ■ Stop ends it', async ({ page }) => {
+  test('▶ Tour demonstrates the whole vocabulary by itself — zoom out, FLY IN on a panel and FLY OUT again, a pop-up joining the wall (and the camera flying back), a sweep around the wall — and ends where it began', async ({ page }) => {
+    test.setTimeout(90_000);
+    await open(page);
+    await settle(page);
+    const home = await dist(page);
+    const caption = page.locator('.ws3d-caption');
+    const st = (f: string) => page.evaluate((x) => { const w = (window as any).__ws3d; return x === 'expanded' ? w.stage.expandedId : x === 'popup' ? w.stage.panels.has('about-wall') : x === 'rotating' ? w.orbit.autoRotate : null; }, f);
+    await page.getByRole('button', { name: '▶ Tour' }).click();
+    await expect(caption).toContainText('Zoom out', { timeout: 4000 });
+    await expect(caption).toContainText('Fly in', { timeout: 6000 });
+    await expect.poll(() => st('expanded'), { timeout: 4000 }).toBe('trades');                         // flew in on a panel: expanded
+    await page.waitForTimeout(600); await settle(page);                                                 // (the flight takes a moment, longer under load)
+    expect(await dist(page), 'the camera flew in').toBeLessThan(home * 0.7);
+    await expect(caption).toContainText('Fly out', { timeout: 8000 });
+    await expect.poll(() => st('expanded'), { timeout: 4000 }).toBeNull();                              // …and out: the view from before
+    await expect(caption).toContainText('pop-up', { timeout: 12_000 });
+    await expect.poll(() => st('popup'), { timeout: 4000 }).toBe(true);                                 // a pop-up joined the wall
+    await expect(caption).toContainText('Close it', { timeout: 6000 });
+    await expect.poll(() => st('popup'), { timeout: 4000 }).toBe(false);                                // closed; the camera flies back
+    await expect(caption).toContainText('Rotate', { timeout: 8000 });
+    await expect.poll(() => st('rotating'), { timeout: 3000 }).toBe(true);                              // the sweep
+    await expect(caption).toContainText('Back out', { timeout: 12_000 });
+    expect(await st('rotating'), 'the sweep stopped').toBe(false);
+    await expect(caption).toHaveCount(0, { timeout: 8000 });                                            // the tour ended …
+    await expect(page.getByRole('button', { name: '▶ Tour' })).toBeVisible();
+    await settle(page);
+    expect(Math.abs((await dist(page)) - home) / home, '… back at the overview').toBeLessThan(0.05);
+    expect(await st('popup')).toBe(false);
+  });
+
+  test('■ Stop ends the tour anywhere: stopped mid fly-in, the camera flies back out and nothing is left open', async ({ page }) => {
     await open(page);
     await settle(page);
     const home = await dist(page);
     await page.getByRole('button', { name: '▶ Tour' }).click();
-    await expect(page.locator('.ws3d-caption')).toContainText('Zoom out', { timeout: 4000 });
-    await expect(page.locator('.ws3d-caption')).toContainText('Zoom in', { timeout: 6000 });
-    await page.waitForTimeout(500); await settle(page);
-    expect(await dist(page), 'the tour zoomed IN on a panel').toBeLessThan(home * 0.7);
+    await expect(page.locator('.ws3d-caption')).toContainText('Fly in', { timeout: 8000 });
+    await page.waitForTimeout(500);
     await page.getByRole('button', { name: '■ Stop' }).click();
     await expect(page.locator('.ws3d-caption')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '▶ Tour' })).toBeVisible();
+    await page.waitForTimeout(1200); await settle(page);
+    expect(await page.evaluate(() => (window as any).__ws3d.stage.expandedId), 'no longer expanded').toBeNull();
+    expect(Math.abs((await dist(page)) - home) / home, 'flew back to where it started').toBeLessThan(0.05);
   });
 
   test('the Theme drop-down re-dresses the scene live — panels, title bars, Display menu, backdrop, floor — keeping the camera; leaving the tab keeps the theme; ⓘ opens a pop-up', async ({ page }) => {
@@ -155,5 +185,66 @@ test.describe('demo: the 3D Workspace tab', () => {
     const logBody = await page.evaluate(() => { const st = (window as any).__ws3d.stage; const a = st.clientPointForContent('log', 40, 40), b = st.clientPointForContent('wall', 40, 40); return [a, b] as { x: number; y: number }[]; });
     for (const pt of logBody) { const clip = { x: Math.round(pt.x), y: Math.round(pt.y), width: 260, height: 120 };
       expect(await shot(true, clip), 'the floor does not cross a panel\'s content').toBe(await shot(false, clip)); }
+  });
+
+  test('⟳ Rotate sweeps the camera around the wall (to one side and back, never behind it) until a drag takes the camera; Recenter and Overview stop it', async ({ page }) => {
+    await open(page);
+    await settle(page);
+    const az = () => page.evaluate(() => (window as any).__ws3d.orbit.getAzimuthalAngle() as number);
+    const rot = () => page.evaluate(() => (window as any).__ws3d.orbit.autoRotate as boolean);
+    const btn = page.getByRole('button', { name: /Rotate/ });
+    expect(await rot()).toBe(false);
+    await btn.click();
+    await expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(await rot()).toBe(true);
+    // (the sweep is driven by the controls' update(), once per rendered frame — a headless GL context renders only a few frames a second, so step it directly: the same code, deterministically)
+    const sweep = (n: number, speed: number) => page.evaluate(([N, SP]) => { const o = (window as any).__ws3d.orbit; o.autoRotateSpeed = SP as number; const out: number[] = []; for (let i = 0; i < (N as number); i++) { o.update(); out.push(o.getAzimuthalAngle()); } return out; }, [n, speed]);
+    const a0 = await az();
+    const first = await sweep(60, 0.9);   // (damped: it eases into the sweep)
+    expect(Math.abs(first[first.length - 1] - a0), 'the camera is sweeping').toBeGreaterThan(0.02);
+    // the sweep REVERSES at its limit instead of running on behind the wall
+    const seen = await sweep(500, 20);
+    expect(Math.max(...seen.map(Math.abs)), 'never past the hard clamp (~60°) — nowhere near behind the wall (even at 20× speed, whose momentum overshoots the turn-round point)').toBeLessThanOrEqual(1.0501);
+    expect(Math.max(...seen), 'it reached one side …').toBeGreaterThan(0.8);
+    expect(Math.min(...seen), '… and came back across to the other').toBeLessThan(-0.8);
+    // a drag takes the camera back: the sweep stops, the limits are lifted
+    await page.mouse.move(700, 500); await page.mouse.down(); await page.mouse.move(740, 505, { steps: 4 }); await page.mouse.up();
+    await page.waitForTimeout(300);
+    expect(await rot(), 'a drag stopped the sweep').toBe(false);
+    await expect(btn).toHaveAttribute('aria-pressed', 'false');
+    expect(await page.evaluate(() => (window as any).__ws3d.orbit.maxAzimuthAngle)).toBe(Infinity);
+    // Recenter: stops it and flies home
+    await btn.click(); expect(await rot()).toBe(true);
+    await page.getByRole('button', { name: 'Recenter' }).click();
+    expect(await rot(), 'Recenter stopped it').toBe(false);
+    await btn.click(); await page.getByRole('button', { name: 'Overview' }).click();
+    expect(await rot(), 'Overview stopped it').toBe(false);
+  });
+
+  test('a SCAPE of chart tiles lies on the floor in front of the wall (flat, below every panel, live) and is replaced — not duplicated — when the theme changes', async ({ page }) => {
+    await open(page);
+    const info = () => page.evaluate(() => { const w = (window as any).__ws3d, st = w.stage, g = w.scape; if (!g) return null;
+      const tiles = g.children.filter((c: any) => c.isMesh), labels = g.children.filter((c: any) => c.isSprite);
+      let lowest = 9; for (const p of st.panels.values()) lowest = Math.min(lowest, p.group.position.y - p.content.height / st.pxPerUnit / 2);
+      return { tiles: tiles.length, labels: labels.length, flat: tiles.every((t: any) => Math.abs(t.rotation.x + Math.PI / 2) < 1e-6), belowWall: tiles.every((t: any) => t.position.y < lowest), inFront: tiles.every((t: any) => t.position.z > 0),
+        copies: st.scene.children.filter((c: any) => c.name === 'scape').length as number, floorY: w.floor.position.y as number, tileY: tiles[0].position.y as number }; });
+    const a = (await info())!;
+    expect(a.tiles).toBe(12); expect(a.labels, 'a ticker label per tile').toBe(12);
+    expect(a.flat, 'lying flat on the floor').toBe(true); expect(a.belowWall, 'below every panel').toBe(true); expect(a.inFront, 'in front of the wall').toBe(true);
+    expect(a.tileY, 'on the floor').toBeCloseTo(a.floorY, 1);
+    expect(a.copies).toBe(1);
+    // live: the tiles' price lines tick (a tile's texture is redrawn)
+    const hash = () => page.evaluate(() => { const t = (window as any).__ws3d.scape.children.find((c: any) => c.isMesh); const cv = t.material.map.image as HTMLCanvasElement; return cv.toDataURL().length + ':' + cv.toDataURL().slice(-40); });
+    const h0 = await hash(); await page.waitForTimeout(3200);
+    expect(await hash(), 'the tile redrew (a new price point)').not.toBe(h0);
+    // drawn: the strip under the wall changes when the scape is hidden
+    const strip = { x: 100, y: 770, width: 1300, height: 110 };
+    const shot = async (v: boolean) => { await page.evaluate((vis) => { const w = (window as any).__ws3d; w.scape.visible = vis; w.stage.invalidate(); }, v); await page.waitForTimeout(200); return (await page.screenshot({ clip: strip })).toString('base64'); };
+    expect(await shot(true)).not.toBe(await shot(false));
+    // the theme change rebuilds it in the new colours — one scape, not two
+    await page.locator('.demo-bar select').first().selectOption('amber');
+    await page.waitForTimeout(1200);
+    const b = (await info())!;
+    expect(b.copies).toBe(1); expect(b.tiles).toBe(12);
   });
 });
